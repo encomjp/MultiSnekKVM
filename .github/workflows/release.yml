@@ -1,0 +1,131 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.0.1-preview)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install MSYS2 & Opus libraries
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-opus
+            mingw-w64-x86_64-opusfile
+            mingw-w64-x86_64-libogg
+
+      - name: Install Wails CLI
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+          wails doctor
+
+      - name: Test
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
+          go test ./internal/...
+          cd frontend; npm install; npm test; cd ..
+
+      - name: Build
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          $env:CGO_LDFLAGS = "-static -L$msys2/mingw64/lib -lopus -lopusfile -logg -lm -lstdc++ -lws2_32 -lssp"
+          $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
+          wails build
+
+      - name: Verify output
+        shell: pwsh
+        run: |
+          $exe = Get-Item "build\bin\Multisnek.exe"
+          $sizeMB = "{0:N1}" -f ($exe.Length / 1MB)
+          Write-Host "Built: $($exe.Name)  ($sizeMB MB)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Multisnek-windows-amd64
+          path: build/bin/Multisnek.exe
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Multisnek-windows-amd64
+          path: dist/
+
+      - name: Determine tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine release kind
+        id: kind
+        shell: bash
+        run: |
+          tag_name="${{ steps.tag.outputs.name }}"
+          if [[ "$tag_name" == *-* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: "Multisnek ${{ steps.tag.outputs.name }}"
+          draft: false
+          prerelease: ${{ steps.kind.outputs.prerelease }}
+          generate_release_notes: true
+          files: dist/Multisnek.exe

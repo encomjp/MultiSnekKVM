@@ -1,0 +1,73 @@
+:root {
+  --bg: #f4f7fb;
+  --surface: #f7f9fc;
+  --panel: #ffffff;
+  --panel-strong: #eef2f8;
+  --panel-accent: #edf4ff;
+  --nav-bg: rgba(244, 247, 251, 0.92);
+
+  --border: rgba(18, 32, 56, 0.1);
+  --border-strong: rgba(18, 32, 56, 0.18);
+  --accent-border: rgba(43, 99, 235, 0.26);
+
+  --text: #1f2937;
+  --text-strong: #0f172a;
+  --text-secondary: #526176;
+  --text-muted: #7b8798;
+
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --success: #2f855a;
+  --success-bg: rgba(47, 133, 90, 0.12);
+  --danger: #c74c53;
+  --danger-bg: rgba(199, 76, 83, 0.12);
+  --warning: #c47b2c;
+  --warning-bg: rgba(196, 123, 44, 0.14);
+
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  --radius-sm: 0.55rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+
+  --shadow-sm: 0 10px 30px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 16px 40px rgba(15, 23, 42, 0.1);
+  --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.22);
+
+  --transition-fast: 140ms ease;
+  --transition-normal: 220ms ease;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0d131b;
+  --surface: #111926;
+  --panel: #121b28;
+  --panel-strong: #1a2636;
+  --panel-accent: #17263a;
+  --nav-bg: rgba(13, 19, 27, 0.92);
+
+  --border: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(148, 163, 184, 0.24);
+  --accent-border: rgba(96, 165, 250, 0.34);
+
+  --text: #dbe4f0;
+  --text-strong: #f8fafc;
+  --text-secondary: #9eb0c6;
+  --text-muted: #74839a;
+
+  --accent: #60a5fa;
+  --accent-strong: #3b82f6;
+  --success: #6bc58d;
+  --success-bg: rgba(69, 143, 97, 0.2);
+  --danger: #ef6b73;
+  --danger-bg: rgba(170, 65, 73, 0.2);
+  --warning: #f0b35a;
+  --warning-bg: rgba(176, 114, 39, 0.18);
+
+  --shadow-sm: 0 12px 32px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 18px 44px rgba(0, 0, 0, 0.32);
+  --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.24);
+}

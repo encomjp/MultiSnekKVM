@@ -1,0 +1,36 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="iconGrad" x1="56" y1="48" x2="200" y2="208" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18181b"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="256" height="256" rx="58" fill="url(#bgGrad)"/>
+  <!-- Subtle border -->
+  <rect x="1.5" y="1.5" width="253" height="253" rx="57" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="3"/>
+
+  <!-- Send / cursor icon — matches the nav brand icon in App.svelte, redrawn for 256px canvas -->
+  <!-- Path: M15 10l-4 4l6 6l4-16l-18 7l4 2l2 6l3-4 scaled to ~160x160 centered at 128,128 -->
+  <!-- Original viewBox 0 0 24 24 → scale factor ~6.67, offset to center -->
+  <g transform="translate(28, 28) scale(8.33)" filter="url(#glow)">
+    <!-- Outer fill (body of the arrow) -->
+    <path
+      d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4"
+      fill="none"
+      stroke="url(#iconGrad)"
+      stroke-width="1.65"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+</svg>

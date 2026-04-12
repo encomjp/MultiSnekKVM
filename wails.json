@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "multisnek",
+  "outputfilename": "Multisnek",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "info": {
+    "productName": "Multisnek",
+    "companyName": "Multisnek"
+  },
+  "author": {
+    "name": "",
+    "email": ""
+  }
+}
