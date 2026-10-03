@@ -163,6 +163,8 @@ type PeerInfo struct {
 }
 
 type SessionStatus struct {
+	Route          string `json:"route,omitempty"`
+	RemoteAddress  string `json:"remoteAddress,omitempty"`
 	Connected      bool   `json:"connected"`
 	Controlling    bool   `json:"controlling"`
 	PeerName       string `json:"peerName"`
