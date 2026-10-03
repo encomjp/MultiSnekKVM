@@ -31,7 +31,7 @@ A sidebar keeps three screens one click away, with **This PC** (listening status
 | Screen | What you get |
 |--------|--------------|
 | **Session** | Who you are controlling, the route in use (USB4, Ethernet, Wi-Fi, Tailnet, ...), latency, jitter and audio at a glance; a sketch of your screen arrangement; an activity feed where received files wait for **Save to Downloads** or **Discard**; quick audio, microphone and auto-reconnect controls; live subsystem health and alerts. |
-| **Devices** | Every known PC with its online and pairing state. PCs reachable over several routes list them as radio buttons with the best one marked, so you can pick the route for the next connection. New PCs are paired once with their six-digit PIN (**Pair & connect**). A side panel shows this PC's adapters and how to link over USB4 or Bluetooth. |
+| **Devices** | Every known PC with its online and pairing state. PCs reachable over several routes list them as radio buttons with the best one marked, so you can pick the route for the next connection. New PCs are paired once with their six-digit PIN (**Pair & connect**). A Bluetooth card lists paired PCs found running MultiSnek, and a side panel shows this PC's adapters and how to link over USB4 or Bluetooth. |
 | **Settings** | **Input & screens** (hand-off edge, monitor layout with a draggable hand-off zone and return point, pointer speed, exit hotkey recorder), **Audio** (direction, devices, Auto/PCM/Opus transport, microphone), **Startup** (autostart, tray, theme), **Security** (certificate fingerprint, paired devices, Tailscale) and **Diagnostics** (health, load counters, log analysis, copyable recent logs). |
 
 ---
@@ -102,6 +102,12 @@ Output: `build/bin/Multisnek.exe`
 | **Identity change** | Regenerated certificates or renamed identities require re-trust before traffic is accepted |
 
 Connections run over TLS 1.3 with device certificates and fingerprint pinning. Existing trusted peers reconnect without the PIN. For new pairing, **both devices must run a version supporting SPAKE2**; insecure legacy plaintext-PIN pairing is rejected. The current SPAKE2 dependency has not yet received an independent security audit, so security-sensitive deployments should review the pairing implementation before release.
+
+## 🔵 Native Bluetooth link
+
+Two Windows PCs that are **paired in Windows Bluetooth settings** can connect directly over Classic Bluetooth (RFCOMM), with no network and no hotspot. MultiSnek advertises itself to paired devices, so the other PC appears under **Devices** automatically (use the Bluetooth card's refresh button after pairing). You can also add one manually with `bt://AA:BB:CC:DD:EE:FF` or just its MAC address.
+
+The connection uses the same TLS 1.3 session, PIN pairing and certificate pinning as any other route, so keyboard, mouse, clipboard, files and audio all work. Classic Bluetooth offers roughly 1-2 Mbit/s shared: audio is always compressed (Opus; desktop audio at up to 96 kbit/s, microphone at 64 kbit/s) and large file transfers are slow. Bluetooth ranks after every IP route, so a faster link is used whenever one exists. Turn it off under **Settings > Startup > Bluetooth connections**.
 
 ## 🔌 Direct USB4, Thunderbolt and Bluetooth connections
 
