@@ -7,6 +7,7 @@ import (
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"multisnekkvm/internal/audio"
 	"multisnekkvm/internal/input"
 	"multisnekkvm/internal/logutil"
 	"multisnekkvm/internal/protocol"
@@ -146,40 +147,24 @@ func (a *App) handleFrame(f Frame) {
 		log.Println("peer requested switch back")
 		a.pausePeerControlUntilWake()
 		a.inputHook.ExitRemoteMode()
-	case MsgAudioTransport:
-		a.handleInboundAudioTransport(f.Payload)
-	case MsgAudioFormat:
-		a.handleInboundAudioFormat(f.Payload)
+	case MsgAudioTransport, MsgAudioFormat, MsgAudioData:
+		a.handleInboundAudioFrame(audio.StreamDesktop, f)
+	case MsgMicTransport, MsgMicFormat, MsgMicData:
+		a.handleInboundAudioFrame(audio.StreamMic, f)
 	case MsgAudioStart:
-		if a.audio != nil {
-			_ = a.audio.StartCapture(func(f Frame) {
-				a.handleCapturedAudioFrame(f)
-			})
-		}
+		a.startCapture(audio.StreamDesktop)
 	case MsgAudioStop:
 		if a.audio != nil {
-			a.audio.StopCapture()
+			a.audio.StopCapture(audio.StreamDesktop)
+			a.audio.StopPlayback(audio.StreamDesktop)
 		}
-	case MsgAudioData:
-		atomic.AddUint64(&a.recvAudioN, 1)
-		a.handleInboundAudioData(f.Payload)
-	case MsgMicTransport:
-		a.handleInboundMicTransport(f.Payload)
-	case MsgMicFormat:
-		a.handleInboundMicFormat(f.Payload)
 	case MsgMicStart:
-		if a.audio != nil {
-			_ = a.audio.StartMicCapture(func(f Frame) {
-				a.handleCapturedMicFrame(f)
-			})
-		}
+		a.startCapture(audio.StreamMic)
 	case MsgMicStop:
 		if a.audio != nil {
-			a.audio.StopMicCapture()
+			a.audio.StopCapture(audio.StreamMic)
+			a.audio.StopPlayback(audio.StreamMic)
 		}
-	case MsgMicData:
-		atomic.AddUint64(&a.recvAudioN, 1)
-		a.handleInboundMicData(f.Payload)
 	case MsgUnicodeText:
 		m, err := DecodeUnicodeText(f.Payload)
 		if err != nil {

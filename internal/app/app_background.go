@@ -30,8 +30,8 @@ func (a *App) BeforeClose(_ context.Context) bool {
 func (a *App) Shutdown(_ context.Context) {
 	logutil.LogKV("app.shutdown.begin",
 		"connected", a.transport != nil && a.transport.GetSession() != nil,
-		"playing_audio", a.audio != nil && a.audio.IsPlaying(),
-		"capturing_audio", a.audio != nil && a.audio.IsCapturing(),
+		"playing_audio", a.audioPlaying(),
+		"capturing_audio", a.audioCapturing(),
 	)
 	if a.power != nil {
 		a.power.Stop()

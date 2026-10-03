@@ -25,7 +25,6 @@ func (a *App) Startup(ctx context.Context) {
 	)
 
 	a.ctx, a.cancel = context.WithCancel(ctx)
-	a.initRealtimeAudioQueue()
 	a.initSendMux()
 	a.initInboundDispatch()
 
@@ -158,11 +157,21 @@ func (a *App) Startup(ctx context.Context) {
 				log.Printf("inbound-file: chunk queue full, dropping chunk (transfer will fail)")
 			}
 			return
+		// Audio transport/format/data share one ordered queue so a format
+		// change can never overtake the data that precedes it. Data may be
+		// dropped under pressure (the jitter buffer conceals it); control
+		// frames must not be.
 		case MsgAudioData, MsgMicData:
 			select {
 			case a.audioInboundCh <- f:
 			default:
-				log.Printf("inbound-audio: queue full, dropping audio frame type=0x%02x", f.Type)
+				atomic.AddUint64(&a.audioInboundDroppedN, 1)
+			}
+			return
+		case MsgAudioTransport, MsgAudioFormat, MsgMicTransport, MsgMicFormat:
+			select {
+			case a.audioInboundCh <- f:
+			case <-a.ctx.Done():
 			}
 			return
 		}
@@ -176,8 +185,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.transport.OnConnect = func(peerID, peerName, role string) {
 		a.drainSendMux()
 		a.drainInboundChannels()
-		a.bumpRealtimeSendGeneration()
-		a.resetAudioPipelines()
+		a.resetAudioStreams()
 		a.sendEdgeConfig()
 		if role == "controller" {
 			a.inputHook.SetConnected(true, func(f Frame) {
@@ -212,10 +220,9 @@ func (a *App) Startup(ctx context.Context) {
 	a.transport.OnDisconnect = func() {
 		a.drainSendMux()
 		a.drainInboundChannels()
-		a.bumpRealtimeSendGeneration()
 		a.stopAllAudio()
 		a.stopAllMic()
-		a.resetAudioPipelines()
+		a.resetAudioStreams()
 		a.inputHook.SetConnected(false, nil)
 		a.resetControlledState()
 		a.fileTx.CancelAll()
