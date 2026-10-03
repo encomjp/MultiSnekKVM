@@ -67,6 +67,12 @@ export function endpointLabel(address) {
 }
 
 export function routeLabel(route) {
+  if (route === 'usb4') return 'USB4 / Thunderbolt';
+  if (route === 'usb-bridge') return 'USB network bridge';
+  if (route === 'ethernet') return 'Ethernet';
+  if (route === 'wifi') return 'Wi-Fi';
+  if (route === 'bluetooth') return 'Bluetooth PAN';
+  if (route === 'network') return 'Network';
   if (route === 'lan') {
     return 'LAN';
   }
