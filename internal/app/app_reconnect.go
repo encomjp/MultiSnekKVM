@@ -220,6 +220,12 @@ func (a *App) UntrustPeer(peerID string) error {
 	if err := a.trust.Remove(peerID); err != nil {
 		return err
 	}
+	// Revoking trust must also terminate an active session.
+	if a.transport != nil {
+		if session := a.transport.GetSession(); session != nil && session.PeerID == peerID {
+			a.transport.Disconnect()
+		}
+	}
 	a.settings.Update(func(s *Settings) {
 		if s.LastPeerID == peerID {
 			s.LastPeerID = ""
