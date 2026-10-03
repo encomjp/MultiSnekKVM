@@ -76,7 +76,7 @@ Keyboard, clipboard, audio, and mic follow seamlessly.
 | 📋 | **Clipboard Sync** | Copy on one PC, paste on the other — instant, bidirectional |
 | 🔊 | **Desktop Audio Streaming** | Hear the remote PC's audio or broadcast yours (WASAPI loopback) |
 | 🎤 | **Microphone Forwarding** | Send your mic to the remote PC or hear theirs |
-| 🔒 | **Trust-on-First-Use Security** | ECDSA P-256 certs, TLS 1.3, fingerprint-pinned peer trust |
+| 🔒 | **Authenticated Peer Trust** | TLS 1.3, certificate-bound SPAKE2 PIN pairing, fingerprint-pinned reconnects |
 | 🌐 | **LAN + Tailscale Discovery** | Auto-discovers peers via UDP broadcast and Tailscale status |
 | 🔄 | **Auto-Reconnect** | Exponential backoff reconnection on unexpected disconnect |
 | 💓 | **Health Monitor** | Real-time subsystem health checks with frontend status display |
@@ -114,11 +114,11 @@ Output: `build/bin/Multisnek.exe`
 
 | Scenario | Behavior |
 |----------|----------|
-| **First contact** | Trust-on-first-use pins the peer certificate on the first successful connection in either direction |
+| **First contact** | Enter the six-digit PIN shown on the remote device. A certificate-bound SPAKE2 exchange verifies both peers before their certificates are pinned; the PIN itself is never sent on the wire |
 | **Known peer** | Future sessions must present the same fingerprint or the connection is rejected |
 | **Identity change** | Regenerated certificates or renamed identities require re-trust before traffic is accepted |
 
-Connections still run over TLS 1.3 with device certificates and fingerprint pinning.
+Connections run over TLS 1.3 with device certificates and fingerprint pinning. Existing trusted peers reconnect without the PIN. For new pairing, **both devices must run a version supporting SPAKE2**; insecure legacy plaintext-PIN pairing is rejected. The current SPAKE2 dependency has not yet received an independent security audit, so security-sensitive deployments should review the pairing implementation before release.
 
 ## ⚙️ Requirements
 
