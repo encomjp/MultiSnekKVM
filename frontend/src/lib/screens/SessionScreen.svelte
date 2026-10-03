@@ -80,7 +80,7 @@
         <h1 class="peer-title">{lastName || 'No session'}</h1>
         <p>
           {#if lastName}
-            Your last session was with {lastName}{lastRoute ? ` over ${routeLabel(lastRoute)}` : ''}. Reconnect, or pick
+            Your last session was with {lastName}{lastRoute ? ` over ${routeLabel(lastRoute, lastPeerAddress(conn.lastPeer))}` : ''}. Reconnect, or pick
             another device.
           {:else}
             Pick a device to start a session. Devices on your network and tailnet appear automatically.
@@ -115,7 +115,7 @@
     <section aria-label="Connection details" class="details">
       <div class="detail">
         <span class="detail-label">Route</span>
-        <span class="detail-value with-icon"><Icon name="bolt" />{routeLabel(routeKind)}</span>
+        <span class="detail-value with-icon"><Icon name="bolt" />{routeLabel(routeKind, session.remoteAddress)}</span>
         {#if session.remoteAddress}<span class="detail-sub mono selectable">{session.remoteAddress}</span>{/if}
       </div>
       <div class="detail">
