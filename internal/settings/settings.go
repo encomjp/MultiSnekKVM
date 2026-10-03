@@ -15,9 +15,12 @@ type Settings struct {
 	AudioMode      string  `json:"audioMode"`
 	AudioTiming    string  `json:"audioTiming"`
 	AudioTransport string  `json:"audioTransport"`
-	AudioProfile   string  `json:"audioProfile"`
-	Autostart      bool    `json:"autostart"`
-	StartMinimized bool    `json:"startMinimized"`
+	// AudioTransportV2 marks settings written by 0.3.0+, where "auto" became
+	// the default. Older files stored the old default "pcm", which is migrated.
+	AudioTransportV2 bool   `json:"audioTransportV2,omitempty"`
+	AudioProfile     string `json:"audioProfile"`
+	Autostart        bool   `json:"autostart"`
+	StartMinimized   bool   `json:"startMinimized"`
 
 	MuteSource bool   `json:"muteSource"`
 	MicMode    string `json:"micMode"`
@@ -53,15 +56,16 @@ type Settings struct {
 }
 
 var defaultSettings = Settings{
-	EdgeSide:       "right",
-	Sensitivity:    1.0,
-	AudioMode:      "off",
-	AudioTiming:    "always",
-	AudioTransport: "pcm",
-	AudioProfile:   "balanced",
-	MicMode:        "off",
-	Autostart:      false,
-	StartMinimized: false,
+	EdgeSide:         "right",
+	Sensitivity:      1.0,
+	AudioMode:        "off",
+	AudioTiming:      "always",
+	AudioTransport:   "auto",
+	AudioProfile:     "balanced",
+	AudioTransportV2: true,
+	MicMode:          "off",
+	Autostart:        false,
+	StartMinimized:   false,
 }
 
 type Store struct {
@@ -117,7 +121,7 @@ func (s *Store) load() {
 	if loaded.AudioTiming != "" {
 		s.data.AudioTiming = loaded.AudioTiming
 	}
-	if loaded.AudioTransport != "" {
+	if loaded.AudioTransport != "" && (loaded.AudioTransportV2 || loaded.AudioTransport != "pcm") {
 		s.data.AudioTransport = loaded.AudioTransport
 	}
 	if loaded.AudioProfile != "" {
