@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/link"
+	"multisnekkvm/internal/transport"
 )
 
 // reconnectCandidatesFor retains fresh addresses ahead of saved addresses
@@ -83,15 +85,28 @@ func (a *App) reconnectCandidates() ([]string, string) {
 }
 
 func (a *App) tryConnectCandidates(logPrefix string, candidates []string) (string, error) {
+	return tryCandidates(logPrefix, candidates, func(addr string) error {
+		return a.transport.ConnectTo(addr, "")
+	})
+}
+
+// tryCandidates connects to each address in order until one succeeds. Only
+// connectivity failures (transport.ErrDial) advance to the next address; an
+// authentication, PIN or trust failure stops immediately so a rejected peer
+// identity is never silently retried on another address.
+func tryCandidates(logPrefix string, candidates []string, connect func(addr string) error) (string, error) {
 	var lastErr error
 	for _, addr := range candidates {
 		log.Printf("%s: trying %s", logPrefix, addr)
-		if err := a.transport.ConnectTo(addr, ""); err != nil {
-			log.Printf("%s: %s failed: %v", logPrefix, addr, err)
-			lastErr = err
-			continue
+		err := connect(addr)
+		if err == nil {
+			return addr, nil
 		}
-		return addr, nil
+		log.Printf("%s: %s failed: %v", logPrefix, addr, err)
+		lastErr = err
+		if !errors.Is(err, transport.ErrDial) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no candidates available")
@@ -155,7 +170,19 @@ func (a *App) reconnectLoop(ctx context.Context, expectedAddr string) {
 
 			if connectedAddr != "" {
 				log.Printf("auto-reconnect: success to %s", connectedAddr)
-				time.Sleep(3 * time.Second)
+				// Remember the address that actually worked (it may differ
+				// from the one we lost) unless the user changed peer meanwhile.
+				a.mu.Lock()
+				if a.lastPeerAddr == expectedAddr {
+					a.lastPeerAddr = connectedAddr
+				}
+				a.mu.Unlock()
+				expectedAddr = connectedAddr
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
 				if a.transport.GetSession() != nil {
 					return
 				}
@@ -265,6 +292,9 @@ func (a *App) Reconnect() error {
 	connectedAddr, err := a.tryConnectCandidates("reconnect", candidates)
 	if err == nil {
 		log.Printf("reconnect: connected via %s", connectedAddr)
+		a.mu.Lock()
+		a.lastPeerAddr = connectedAddr
+		a.mu.Unlock()
 		return nil
 	}
 	return fmt.Errorf("all addresses failed: %v", err)
