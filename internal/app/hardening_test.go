@@ -40,3 +40,28 @@ func TestTryCandidatesAdvancesOnDialError(t *testing.T) {
 		t.Fatalf("tried %v", tried)
 	}
 }
+
+func TestReleaseAllModifiersOnlyAfterInjectedInput(t *testing.T) {
+	orig := ReleaseAllModifiers
+	defer func() { ReleaseAllModifiers = orig }()
+	calls := 0
+	ReleaseAllModifiers = func() { calls++ }
+
+	a := &App{}
+	a.releaseInjectedRemoteKeys()
+	if calls != 0 {
+		t.Fatalf("controller side (nothing injected) must not release modifiers, got %d calls", calls)
+	}
+
+	if _, allowed := a.notePeerControlInput(false); !allowed {
+		t.Fatal("expected input to be allowed")
+	}
+	a.releaseInjectedRemoteKeys()
+	if calls != 1 {
+		t.Fatalf("controlled side must release modifiers after injecting, got %d calls", calls)
+	}
+	a.releaseInjectedRemoteKeys()
+	if calls != 1 {
+		t.Fatalf("no injection since last release; got %d calls", calls)
+	}
+}
