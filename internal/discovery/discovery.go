@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"multisnekkvm/internal/identity"
+	"multisnekkvm/internal/link"
 )
 
 const peerTTL = 15 * time.Second
@@ -28,6 +29,7 @@ type DiscoveredPeer struct {
 	Addresses   []string
 	Fingerprint string
 	Routes      []string
+	AddressKinds map[string]string
 	LastSeen    time.Time
 	addressSeen map[string]time.Time
 	routeSeen   map[string]time.Time
@@ -64,14 +66,44 @@ func (d *Discovery) Run(ctx context.Context) {
 
 func (d *Discovery) Peers() []DiscoveredPeer {
 	d.mu.RLock()
-	defer d.mu.RUnlock()
-
 	result := make([]DiscoveredPeer, 0, len(d.peers))
 	for _, p := range d.peers {
 		copyPeer := *p
 		copyPeer.Addresses = append([]string(nil), p.Addresses...)
 		copyPeer.Routes = append([]string(nil), p.Routes...)
 		result = append(result, copyPeer)
+	}
+	d.mu.RUnlock()
+
+	// Detect the Windows-selected outgoing network interface outside the
+	// discovery mutex. USB4NET and network-class USB bridges are ordinary
+	// IP interfaces and do not require a separate wire protocol.
+	adapters := link.Adapters()
+	for i := range result {
+		peer := &result[i]
+		peer.AddressKinds = make(map[string]string, len(peer.Addresses))
+		routes := make(map[string]bool)
+		for _, addr := range peer.Addresses {
+			kind := link.KindForAddress(addr, adapters)
+			peer.AddressKinds[addr] = kind
+			routes[kind] = true
+		}
+		peer.Addresses = link.SortAddresses(peer.Addresses, peer.AddressKinds)
+		peer.Address = ""
+		if len(peer.Addresses) > 0 {
+			peer.Address = peer.Addresses[0]
+		}
+		peer.Routes = peer.Routes[:0]
+		for route := range routes {
+			peer.Routes = append(peer.Routes, route)
+		}
+		sort.Slice(peer.Routes, func(i, j int) bool {
+			left, right := peer.Routes[i], peer.Routes[j]
+			if link.Rank(left) != link.Rank(right) {
+				return link.Rank(left) < link.Rank(right)
+			}
+			return left < right
+		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Name == result[j].Name {
