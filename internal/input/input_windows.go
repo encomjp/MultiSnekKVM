@@ -30,6 +30,7 @@ var (
 	pCloseClipboard      = user32.NewProc("CloseClipboard")
 	pEmptyClipboard      = user32.NewProc("EmptyClipboard")
 	pSetClipboardData    = user32.NewProc("SetClipboardData")
+	pGetClipboardSeqNum  = user32.NewProc("GetClipboardSequenceNumber")
 	pGlobalAlloc         = kernel32.NewProc("GlobalAlloc")
 	pGlobalFree          = kernel32.NewProc("GlobalFree")
 	pGlobalLock          = kernel32.NewProc("GlobalLock")

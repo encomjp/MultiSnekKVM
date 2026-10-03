@@ -13,8 +13,6 @@ import (
 
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/link"
-
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // reconnectCandidatesFor retains fresh addresses ahead of saved addresses
@@ -151,7 +149,7 @@ func (a *App) reconnectLoop(ctx context.Context, expectedAddr string) {
 			log.Printf("auto-reconnect: no addresses known for peer %s yet (attempt %d, retry in %v)", peerName, attempt, delay)
 		} else {
 			log.Printf("auto-reconnect: attempt %d to %s via %d candidates (backoff %v)", attempt, peerName, len(candidates), delay)
-			wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+			a.emitSessionUpdated()
 
 			connectedAddr, lastErr := a.tryConnectCandidates("auto-reconnect", candidates)
 
@@ -240,7 +238,7 @@ func (a *App) UntrustPeer(peerID string) error {
 		}
 	})
 	if a.ctx != nil {
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitPeersUpdated()
 	}
 	return nil
 }
@@ -297,11 +295,10 @@ func (a *App) GetLastPeer() map[string]string {
 
 func (a *App) saveLastPeer(peerID, peerName string) {
 	addrs := make(map[string]string)
-	adapters := link.Adapters()
 
 	if s := a.transport.GetSession(); s != nil && s.Role == "controller" {
 		addr := s.RemoteAddr()
-		kind := link.KindForAddress(addr, adapters)
+		kind := link.RouteKind(addr)
 		addrs[kind] = addr
 	}
 
@@ -313,7 +310,7 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 			for _, addr := range dp.Addresses {
 				kind := dp.AddressKinds[addr]
 				if kind == "" {
-					kind = link.KindForAddress(addr, adapters)
+					kind = link.RouteKind(addr)
 				}
 				if addrs[kind] == "" {
 					addrs[kind] = addr

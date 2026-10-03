@@ -26,6 +26,7 @@ func InjectKey(vkCode uint16, scanCode uint16, flags uint32, down bool) {}
 func ReleaseAllModifiers()                                              {}
 func GetClipboardText() string                                          { return "" }
 func GetClipboardTextForSync() (string, bool)                           { return "", false }
+func GetClipboardSequenceNumber() uint32                                { return 0 }
 func SetClipboardText(text string)                                      {}
 func GetClipboardFiles() []string                                       { return nil }
 func GetScreenBounds() (int32, int32, int32, int32)                     { return 0, 1920, 0, 1080 }

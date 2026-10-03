@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"multisnekkvm/internal/input"
 	"multisnekkvm/internal/logutil"
 	"multisnekkvm/internal/protocol"
@@ -102,7 +101,7 @@ func (a *App) handleFrame(f Frame) {
 				a.mu.Lock()
 				a.clipboardState.RecordRemoteClipboard(text)
 				a.mu.Unlock()
-				SetClipboardText(text)
+				a.queueClipboardWrite(text)
 			} else {
 				log.Printf("drop oversized legacy clipboard payload: %d bytes", len(text))
 			}
@@ -112,7 +111,7 @@ func (a *App) handleFrame(f Frame) {
 			a.mu.Lock()
 			a.clipboardState.RecordRemoteClipboard(m.Text)
 			a.mu.Unlock()
-			SetClipboardText(m.Text)
+			a.queueClipboardWrite(m.Text)
 		} else {
 			log.Printf("drop oversized clipboard payload: %d bytes", len(m.Text))
 		}
@@ -127,7 +126,9 @@ func (a *App) handleFrame(f Frame) {
 		if now > timestampNano {
 			rtt := int((now - timestampNano) / 1e6)
 			firstMeasurement, transportMode, profile, audioLatencyMs := a.updateSessionLatency(rtt)
-			wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+			// Never build the session status on the read loop: it resolves
+			// routes and takes locks. The worker coalesces bursts.
+			a.requestSessionUpdate()
 			if firstMeasurement {
 				peerName := ""
 				if session := a.transport.GetSession(); session != nil {
