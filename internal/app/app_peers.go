@@ -302,6 +302,7 @@ func normalizePeerAddress(raw string, defaultPort int) (string, error) {
 // transport is implied by this API.
 type ConnectionInterface struct {
 	Name      string   `json:"name"`
+	Description string `json:"description,omitempty"`
 	Kind      string   `json:"kind"`
 	Addresses []string `json:"addresses"`
 }
@@ -318,7 +319,7 @@ func (a *App) GetConnectionInterfaces() []ConnectionInterface {
 	result := make([]ConnectionInterface, 0, len(adapters))
 	for _, adapter := range adapters {
 		result = append(result, ConnectionInterface{
-			Name: adapter.Name, Kind: adapter.Kind,
+			Name: adapter.Name, Description: adapter.Description, Kind: adapter.Kind,
 			Addresses: adapter.Addresses,
 		})
 	}
