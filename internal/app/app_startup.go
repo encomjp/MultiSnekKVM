@@ -271,7 +271,7 @@ func (a *App) startup(ctx context.Context) {
 		if a.discovery == nil {
 			return false, "not initialized"
 		}
-		count := len(a.discovery.Peers())
+		count := a.discovery.PeerCount()
 		return true, fmt.Sprintf("%d peers", count)
 	})
 	a.health.Register("tailscale", func() (bool, string) {

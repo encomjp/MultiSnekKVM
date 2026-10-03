@@ -74,6 +74,13 @@ func (d *Discovery) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
+// PeerCount returns the number of tracked peers without resolving routes.
+func (d *Discovery) PeerCount() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return len(d.peers)
+}
+
 func (d *Discovery) Peers() []DiscoveredPeer {
 	d.mu.RLock()
 	result := make([]DiscoveredPeer, 0, len(d.peers))
