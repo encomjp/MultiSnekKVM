@@ -26,14 +26,14 @@ var (
 )
 
 const (
-	wmPowerBroadcast  = 0x0218
-	wmQuitMsg         = 0x0012
-	pbmAPMSuspend     = 0x0004
-	pbmAPMResumeAuto  = 0x0012
-	pbmAPMResumeSusp  = 0x0007
-	csHRedraw         = 0x0002
-	csVRedraw         = 0x0001
-	hwndMessage       = ^uintptr(2) // HWND_MESSAGE = (HWND)-3
+	wmPowerBroadcast = 0x0218
+	wmQuitMsg        = 0x0012
+	pbmAPMSuspend    = 0x0004
+	pbmAPMResumeAuto = 0x0012
+	pbmAPMResumeSusp = 0x0007
+	csHRedraw        = 0x0002
+	csVRedraw        = 0x0001
+	hwndMessage      = ^uintptr(2) // HWND_MESSAGE = (HWND)-3
 )
 
 type wndClassExW struct {

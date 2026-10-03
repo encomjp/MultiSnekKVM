@@ -13,30 +13,30 @@ const MaxFramePayloadBytes = 1 << 20
 
 // Message types
 const (
-	MsgHello          byte = 0x01
-	MsgPairingStart    byte = 0x06
-	MsgPairingExchange byte = 0x07
+	MsgHello                byte = 0x01
+	MsgPairingStart         byte = 0x06
+	MsgPairingExchange      byte = 0x07
 	MsgPairingClientConfirm byte = 0x08
 	MsgPairingServerConfirm byte = 0x09
-	MsgEdgeConfig     byte = 0x02
-	MsgHeartbeat      byte = 0x03
-	MsgMouseMove      byte = 0x10
-	MsgMouseClick     byte = 0x11
-	MsgMouseScroll    byte = 0x12
-	MsgKeyDown        byte = 0x20
-	MsgKeyUp          byte = 0x21
-	MsgClipboard      byte = 0x30
-	MsgSwitchBack     byte = 0x40
-	MsgAudioStart     byte = 0x50
-	MsgAudioStop      byte = 0x51
-	MsgAudioData      byte = 0x52
-	MsgAudioFormat    byte = 0x53
-	MsgMicStart       byte = 0x54
-	MsgMicStop        byte = 0x55
-	MsgMicData        byte = 0x56
-	MsgMicFormat      byte = 0x57
-	MsgAudioTransport byte = 0x58
-	MsgMicTransport   byte = 0x59
+	MsgEdgeConfig           byte = 0x02
+	MsgHeartbeat            byte = 0x03
+	MsgMouseMove            byte = 0x10
+	MsgMouseClick           byte = 0x11
+	MsgMouseScroll          byte = 0x12
+	MsgKeyDown              byte = 0x20
+	MsgKeyUp                byte = 0x21
+	MsgClipboard            byte = 0x30
+	MsgSwitchBack           byte = 0x40
+	MsgAudioStart           byte = 0x50
+	MsgAudioStop            byte = 0x51
+	MsgAudioData            byte = 0x52
+	MsgAudioFormat          byte = 0x53
+	MsgMicStart             byte = 0x54
+	MsgMicStop              byte = 0x55
+	MsgMicData              byte = 0x56
+	MsgMicFormat            byte = 0x57
+	MsgAudioTransport       byte = 0x58
+	MsgMicTransport         byte = 0x59
 
 	// Latency measurement
 	MsgPing byte = 0x04

@@ -20,18 +20,29 @@ import (
 // reconnectCandidatesFor retains fresh addresses ahead of saved addresses
 // within each route, and tries reliable direct links before slower fallbacks.
 func reconnectCandidatesFor(cfg Settings, peers []discovery.DiscoveredPeer) ([]string, string) {
-	if cfg.LastPeerID == "" { return nil, "" }
-	type candidate struct { address, kind string; fresh bool }
+	if cfg.LastPeerID == "" {
+		return nil, ""
+	}
+	type candidate struct {
+		address, kind string
+		fresh         bool
+	}
 	var available []candidate
 	seen := make(map[string]bool)
 	add := func(address, kind string, fresh bool) {
-		if address == "" || seen[address] { return }
+		if address == "" || seen[address] {
+			return
+		}
 		seen[address] = true
-		if kind == "" { kind = "network" }
+		if kind == "" {
+			kind = "network"
+		}
 		available = append(available, candidate{address, kind, fresh})
 	}
 	for _, peer := range peers {
-		if peer.DeviceID != cfg.LastPeerID { continue }
+		if peer.DeviceID != cfg.LastPeerID {
+			continue
+		}
 		for _, address := range peer.Addresses {
 			kind := peer.AddressKinds[address]
 			if kind == "" {
@@ -50,12 +61,18 @@ func reconnectCandidatesFor(cfg Settings, peers []discovery.DiscoveredPeer) ([]s
 	}
 	sort.SliceStable(available, func(i, j int) bool {
 		l, r := link.Rank(available[i].kind), link.Rank(available[j].kind)
-		if l != r { return l < r }
-		if available[i].fresh != available[j].fresh { return available[i].fresh }
+		if l != r {
+			return l < r
+		}
+		if available[i].fresh != available[j].fresh {
+			return available[i].fresh
+		}
 		return available[i].address < available[j].address
 	})
 	result := make([]string, 0, len(available))
-	for _, c := range available { result = append(result, c.address) }
+	for _, c := range available {
+		result = append(result, c.address)
+	}
 	return result, cfg.LastPeerName
 }
 
@@ -290,11 +307,17 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 
 	if a.discovery != nil {
 		for _, dp := range a.discovery.Peers() {
-			if dp.DeviceID != peerID { continue }
+			if dp.DeviceID != peerID {
+				continue
+			}
 			for _, addr := range dp.Addresses {
 				kind := dp.AddressKinds[addr]
-				if kind == "" { kind = link.KindForAddress(addr, adapters) }
-				if addrs[kind] == "" { addrs[kind] = addr }
+				if kind == "" {
+					kind = link.KindForAddress(addr, adapters)
+				}
+				if addrs[kind] == "" {
+					addrs[kind] = addr
+				}
 			}
 		}
 	}

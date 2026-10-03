@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"multisnekkvm/internal/logutil"
-	"multisnekkvm/internal/link"
 	"multisnekkvm/internal/discovery"
+	"multisnekkvm/internal/link"
+	"multisnekkvm/internal/logutil"
 )
 
 func (a *App) syncPairingCode() bool {
@@ -185,9 +185,14 @@ func peerConnectionCandidates(selected string, peers []discovery.DiscoveredPeer)
 	for _, peer := range peers {
 		found := peer.Address == selected
 		for _, address := range peer.Addresses {
-			if address == selected { found = true; break }
+			if address == selected {
+				found = true
+				break
+			}
 		}
-		if !found { continue }
+		if !found {
+			continue
+		}
 		for _, address := range peer.Addresses {
 			if address != selected {
 				candidates = append(candidates, address)
@@ -199,9 +204,13 @@ func peerConnectionCandidates(selected string, peers []discovery.DiscoveredPeer)
 }
 
 func (a *App) connectWithPairingCode(address, pairingCode string) error {
-	if a.transport == nil { return fmt.Errorf("transport unavailable") }
+	if a.transport == nil {
+		return fmt.Errorf("transport unavailable")
+	}
 	normalized, err := normalizePeerAddress(address, a.device.Port)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	candidates := []string{normalized}
 	if a.discovery != nil {
 		candidates = peerConnectionCandidates(normalized, a.discovery.Peers())
@@ -216,9 +225,13 @@ func (a *App) connectWithPairingCode(address, pairingCode string) error {
 		}
 		// Only retry connectivity failures. An authentication, PIN or trust
 		// failure must not silently switch to another peer or retry the PIN.
-		if !strings.HasPrefix(err.Error(), "connect: ") { break }
+		if !strings.HasPrefix(err.Error(), "connect: ") {
+			break
+		}
 	}
-	if connectedAddr == "" { return err }
+	if connectedAddr == "" {
+		return err
+	}
 
 	a.mu.Lock()
 	a.lastPeerAddr = connectedAddr
@@ -260,10 +273,14 @@ func peerSourceLabel(routes []string) string {
 }
 
 func preferredRoute(routes []string) string {
-	if len(routes) == 0 { return "" }
+	if len(routes) == 0 {
+		return ""
+	}
 	preferred := routes[0]
 	for _, route := range routes[1:] {
-		if link.Rank(route) < link.Rank(preferred) { preferred = route }
+		if link.Rank(route) < link.Rank(preferred) {
+			preferred = route
+		}
 	}
 	return preferred
 }
@@ -295,16 +312,15 @@ func normalizePeerAddress(raw string, defaultPort int) (string, error) {
 	return net.JoinHostPort(trimmed, strconv.Itoa(defaultPort)), nil
 }
 
-
 // ConnectionInterface exposes active IP-capable adapters for direct-link setup.
 // USB4/Thunderbolt networking and Bluetooth PAN appear as ordinary IP adapters
 // when Windows and the attached hardware support them; no raw USB/Bluetooth
 // transport is implied by this API.
 type ConnectionInterface struct {
-	Name      string   `json:"name"`
-	Description string `json:"description,omitempty"`
-	Kind      string   `json:"kind"`
-	Addresses []string `json:"addresses"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Kind        string   `json:"kind"`
+	Addresses   []string `json:"addresses"`
 }
 
 func connectionInterfaceKind(name string) string {
