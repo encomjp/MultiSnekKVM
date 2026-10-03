@@ -46,12 +46,9 @@ func InjectMouseMove(dx, dy int32) {
 
 	// Normalize to the 0-65535 range required by MOUSEEVENTF_ABSOLUTE.
 	// Using MOUSEEVENTF_VIRTUALDESK maps coordinates across all monitors.
-	vx, _, _ := pGetSystemMetrics.Call(smXVirtualScreen)
-	vy, _, _ := pGetSystemMetrics.Call(smYVirtualScreen)
-	vw, _, _ := pGetSystemMetrics.Call(smCxVirtualScreen)
-	vh, _, _ := pGetSystemMetrics.Call(smCyVirtualScreen)
-	virtLeft, virtTop := int32(vx), int32(vy)
-	virtWidth, virtHeight := int32(vw), int32(vh)
+	m := currentScreenMetrics()
+	virtLeft, virtTop := m.virtLeft, m.virtTop
+	virtWidth, virtHeight := m.virtWidth, m.virtHeight
 
 	var normX, normY int32
 	if virtWidth > 1 {

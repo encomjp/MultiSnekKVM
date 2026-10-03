@@ -212,3 +212,34 @@ func TestNotifyStateChangeCoalescesConcurrentTransitions(t *testing.T) {
 		}
 	}
 }
+
+func TestInjectedEventFlags(t *testing.T) {
+	if !isInjectedKeyboardEvent(0x10) || !isInjectedKeyboardEvent(0x11) {
+		t.Fatal("LLKHF_INJECTED must be detected")
+	}
+	if isInjectedKeyboardEvent(0x01) || isInjectedKeyboardEvent(0x20) || isInjectedKeyboardEvent(0x80) {
+		t.Fatal("extended/alt/up flags are not injection")
+	}
+	if !isInjectedMouseEvent(0x01) || !isInjectedMouseEvent(0x03) {
+		t.Fatal("LLMHF_INJECTED must be detected")
+	}
+	if isInjectedMouseEvent(0x02) || isInjectedMouseEvent(0) {
+		t.Fatal("LLMHF_LOWER_IL_INJECTED alone / zero are not treated as injected")
+	}
+}
+
+func TestEdgeLoopExitsOnOwnStopChannel(t *testing.T) {
+	ih := &InputHook{connected: true, inRemoteMode: true}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		ih.edgeLoop(stop)
+		close(done)
+	}()
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("edgeLoop did not exit after its stop channel closed")
+	}
+}
