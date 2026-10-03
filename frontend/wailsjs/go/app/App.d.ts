@@ -36,6 +36,8 @@ export function GetAutostart():Promise<boolean>;
 
 export function GetCaptureDeviceID():Promise<string>;
 
+export function GetConnectionInterfaces():Promise<Array<app.ConnectionInterface>>;
+
 export function GetDevice():Promise<identity.DeviceInfo>;
 
 export function GetEdgeSide():Promise<string>;

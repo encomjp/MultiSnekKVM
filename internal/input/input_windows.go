@@ -30,6 +30,7 @@ var (
 	pCloseClipboard      = user32.NewProc("CloseClipboard")
 	pEmptyClipboard      = user32.NewProc("EmptyClipboard")
 	pSetClipboardData    = user32.NewProc("SetClipboardData")
+	pGetClipboardSeqNum  = user32.NewProc("GetClipboardSequenceNumber")
 	pGlobalAlloc         = kernel32.NewProc("GlobalAlloc")
 	pGlobalFree          = kernel32.NewProc("GlobalFree")
 	pGlobalLock          = kernel32.NewProc("GlobalLock")
@@ -168,7 +169,6 @@ type InputHook struct {
 	inRemoteMode       bool
 	sendFn             func(protocol.Frame)
 	onStateChange      func()
-	onEdgeDrag         func()
 	stateChangeRunning bool
 	stateChangePending bool
 	edgeSide           string
@@ -232,25 +232,59 @@ func (ih *InputHook) SetOnStateChange(fn func()) {
 	ih.mu.Unlock()
 }
 
-func (ih *InputHook) SetOnEdgeDrag(fn func()) {
-	ih.mu.Lock()
-	ih.onEdgeDrag = fn
-	ih.mu.Unlock()
+// screenMetrics is a snapshot of the virtual desktop and primary screen size.
+type screenMetrics struct {
+	virtLeft, virtTop, virtWidth, virtHeight int32
+	primaryWidth, primaryHeight              int32
 }
 
-func (ih *InputHook) refreshScreenMetrics() {
+func readScreenMetrics() screenMetrics {
 	vx, _, _ := pGetSystemMetrics.Call(smXVirtualScreen)
 	vy, _, _ := pGetSystemMetrics.Call(smYVirtualScreen)
 	vw, _, _ := pGetSystemMetrics.Call(smCxVirtualScreen)
 	vh, _, _ := pGetSystemMetrics.Call(smCyVirtualScreen)
 	pw, _, _ := pGetSystemMetrics.Call(smCxScreen)
 	ph, _, _ := pGetSystemMetrics.Call(smCyScreen)
-	ih.virtLeft = int32(vx)
-	ih.virtRight = int32(vx) + int32(vw) - 1
-	ih.virtTop = int32(vy)
-	ih.virtBottom = int32(vy) + int32(vh) - 1
-	ih.centerX = int32(pw) / 2
-	ih.centerY = int32(ph) / 2
+	return screenMetrics{
+		virtLeft: int32(vx), virtTop: int32(vy),
+		virtWidth: int32(vw), virtHeight: int32(vh),
+		primaryWidth: int32(pw), primaryHeight: int32(ph),
+	}
+}
+
+// screenMetricsRefreshInterval bounds how stale cached display geometry may
+// get after a monitor is attached, removed or rearranged.
+const screenMetricsRefreshInterval = time.Second
+
+type cachedScreenMetrics struct {
+	m       screenMetrics
+	fetched time.Time
+}
+
+var injectScreenMetrics atomic.Pointer[cachedScreenMetrics]
+
+// currentScreenMetrics returns display geometry cached for up to
+// screenMetricsRefreshInterval, avoiding four GetSystemMetrics syscalls per
+// injected mouse move.
+func currentScreenMetrics() screenMetrics {
+	if c := injectScreenMetrics.Load(); c != nil && time.Since(c.fetched) < screenMetricsRefreshInterval {
+		return c.m
+	}
+	m := readScreenMetrics()
+	injectScreenMetrics.Store(&cachedScreenMetrics{m: m, fetched: time.Now()})
+	return m
+}
+
+func (ih *InputHook) refreshScreenMetrics() {
+	m := readScreenMetrics()
+	ih.mu.Lock()
+	ih.virtLeft = m.virtLeft
+	ih.virtRight = m.virtLeft + m.virtWidth - 1
+	ih.virtTop = m.virtTop
+	ih.virtBottom = m.virtTop + m.virtHeight - 1
+	ih.centerX = m.primaryWidth / 2
+	ih.centerY = m.primaryHeight / 2
+	ih.mu.Unlock()
 }
 
 func (ih *InputHook) SetEdgeSide(side string) {
@@ -282,12 +316,11 @@ func (ih *InputHook) GetSensitivity() float64 {
 	return ih.sensitivity
 }
 
+// GetScreenBounds returns the virtual desktop bounds (cached briefly; it is
+// called for every injected mouse move on the controlled side).
 func GetScreenBounds() (left, right, top, bottom int32) {
-	vx, _, _ := pGetSystemMetrics.Call(smXVirtualScreen)
-	vy, _, _ := pGetSystemMetrics.Call(smYVirtualScreen)
-	vw, _, _ := pGetSystemMetrics.Call(smCxVirtualScreen)
-	vh, _, _ := pGetSystemMetrics.Call(smCyVirtualScreen)
-	return int32(vx), int32(vx) + int32(vw) - 1, int32(vy), int32(vy) + int32(vh) - 1
+	m := currentScreenMetrics()
+	return m.virtLeft, m.virtLeft + m.virtWidth - 1, m.virtTop, m.virtTop + m.virtHeight - 1
 }
 
 func GetCursorPosition() (x, y int32) {

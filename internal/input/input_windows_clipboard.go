@@ -9,9 +9,11 @@ import (
 	"multisnekkvm/internal/clipboard"
 )
 
-func GetClipboardText() string {
-	text, _ := getClipboardText(0, 0)
-	return text
+// GetClipboardSequenceNumber returns the clipboard sequence number, which
+// changes whenever clipboard contents change. Zero means unavailable.
+func GetClipboardSequenceNumber() uint32 {
+	n, _, _ := pGetClipboardSeqNum.Call()
+	return uint32(n)
 }
 
 func GetClipboardTextForSync() (string, bool) {

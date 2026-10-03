@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"multisnekkvm/internal/discovery"
+	"multisnekkvm/internal/link"
 	"multisnekkvm/internal/logutil"
 )
 
@@ -38,40 +40,50 @@ func (a *App) GetDevice() DeviceInfo {
 }
 
 func (a *App) GetPeers() []PeerInfo {
+	// Discovery resolves routes per address (syscalls); never hold a.mu
+	// across it, since inbound input frames take a.mu.Lock.
+	var discovered []discovery.DiscoveredPeer
+	if a.discovery != nil {
+		discovered = a.discovery.Peers()
+	}
+
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manual := make([]PeerInfo, 0, len(a.manualPeers))
+	for _, mp := range a.manualPeers {
+		manual = append(manual, mp)
+	}
+	a.mu.RUnlock()
 
 	seen := make(map[string]bool)
 	var peers []PeerInfo
 
-	if a.discovery != nil {
-		for _, dp := range a.discovery.Peers() {
-			fingerprint := dp.Fingerprint
-			if fingerprint == "" && a.trust != nil {
-				if record, ok := a.trust.GetByDeviceID(dp.DeviceID); ok {
-					fingerprint = record.Fingerprint
-				}
+	for _, dp := range discovered {
+		fingerprint := dp.Fingerprint
+		if fingerprint == "" && a.trust != nil {
+			if record, ok := a.trust.GetByDeviceID(dp.DeviceID); ok {
+				fingerprint = record.Fingerprint
 			}
-			seen[dp.Address] = true
-			routes := append([]string(nil), dp.Routes...)
-			sort.Strings(routes)
-			peers = append(peers, PeerInfo{
-				ID:             dp.DeviceID,
-				Name:           dp.Name,
-				Address:        dp.Address,
-				Addresses:      append([]string(nil), dp.Addresses...),
-				Fingerprint:    fingerprint,
-				Source:         peerSourceLabel(routes),
-				Routes:         routes,
-				PreferredRoute: preferredRoute(routes),
-				Trusted:        a.trust != nil && a.trust.IsTrusted(dp.DeviceID, fingerprint),
-				Status:         "online",
-				LastSeen:       dp.LastSeen.Unix(),
-			})
 		}
+		seen[dp.Address] = true
+		routes := append([]string(nil), dp.Routes...)
+		sort.Slice(routes, func(i, j int) bool { return link.Rank(routes[i]) < link.Rank(routes[j]) })
+		peers = append(peers, PeerInfo{
+			ID:             dp.DeviceID,
+			Name:           dp.Name,
+			Address:        dp.Address,
+			Addresses:      append([]string(nil), dp.Addresses...),
+			AddressKinds:   dp.AddressKinds,
+			Fingerprint:    fingerprint,
+			Source:         peerSourceLabel(routes),
+			Routes:         routes,
+			PreferredRoute: preferredRoute(routes),
+			Trusted:        a.trust != nil && a.trust.IsTrusted(dp.DeviceID, fingerprint),
+			Status:         "online",
+			LastSeen:       dp.LastSeen.Unix(),
+		})
 	}
 
-	for _, mp := range a.manualPeers {
+	for _, mp := range manual {
 		if !seen[mp.Address] {
 			mp.Trusted = a.trust != nil && a.trust.IsTrusted(mp.ID, mp.Fingerprint)
 			if mp.Trusted && mp.Status == "added" {
@@ -128,6 +140,8 @@ func (a *App) GetSession() SessionStatus {
 	lat, _, _, audioLat := a.currentAudioLatencyState()
 	jitter := a.currentJitterMs()
 	return SessionStatus{
+		Route:          link.RouteKind(s.RemoteAddr()),
+		RemoteAddress:  s.RemoteAddr(),
 		Connected:      true,
 		Controlling:    controlling,
 		PeerName:       s.PeerName,
@@ -173,6 +187,31 @@ func (a *App) Connect(address string) error {
 	return a.connectWithPairingCode(address, "")
 }
 
+// peerConnectionCandidates only tries addresses that discovery associated
+// with the *same* device. An explicitly selected address always goes first.
+func peerConnectionCandidates(selected string, peers []discovery.DiscoveredPeer) []string {
+	candidates := []string{selected}
+	for _, peer := range peers {
+		found := peer.Address == selected
+		for _, address := range peer.Addresses {
+			if address == selected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		for _, address := range peer.Addresses {
+			if address != selected {
+				candidates = append(candidates, address)
+			}
+		}
+		break
+	}
+	return candidates
+}
+
 func (a *App) connectWithPairingCode(address, pairingCode string) error {
 	if a.transport == nil {
 		return fmt.Errorf("transport unavailable")
@@ -181,11 +220,24 @@ func (a *App) connectWithPairingCode(address, pairingCode string) error {
 	if err != nil {
 		return err
 	}
-	if err := a.transport.ConnectTo(normalized, strings.TrimSpace(pairingCode)); err != nil {
+	candidates := []string{normalized}
+	if a.discovery != nil {
+		candidates = peerConnectionCandidates(normalized, a.discovery.Peers())
+	}
+
+	// Only connectivity failures advance to the next address. An
+	// authentication, PIN or trust failure must not silently switch to
+	// another address or retry the PIN.
+	code := strings.TrimSpace(pairingCode)
+	connectedAddr, err := tryCandidates("connect", candidates, func(addr string) error {
+		return a.transport.ConnectTo(addr, code)
+	})
+	if err != nil {
 		return err
 	}
+
 	a.mu.Lock()
-	a.lastPeerAddr = normalized
+	a.lastPeerAddr = connectedAddr
 	if session := a.transport.GetSession(); session != nil {
 		if manualPeer, ok := a.manualPeers[normalized]; ok {
 			manualPeer.ID = session.PeerID
@@ -224,15 +276,16 @@ func peerSourceLabel(routes []string) string {
 }
 
 func preferredRoute(routes []string) string {
-	for _, route := range routes {
-		if route == "lan" {
-			return route
-		}
-	}
 	if len(routes) == 0 {
 		return ""
 	}
-	return routes[0]
+	preferred := routes[0]
+	for _, route := range routes[1:] {
+		if link.Rank(route) < link.Rank(preferred) {
+			preferred = route
+		}
+	}
+	return preferred
 }
 
 func normalizePeerAddress(raw string, defaultPort int) (string, error) {
@@ -260,4 +313,34 @@ func normalizePeerAddress(raw string, defaultPort int) (string, error) {
 	}
 
 	return net.JoinHostPort(trimmed, strconv.Itoa(defaultPort)), nil
+}
+
+// ConnectionInterface exposes active IP-capable adapters for direct-link setup.
+// USB4/Thunderbolt networking and Bluetooth PAN appear as ordinary IP adapters
+// when Windows and the attached hardware support them; no raw USB/Bluetooth
+// transport is implied by this API.
+type ConnectionInterface struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Kind        string   `json:"kind"`
+	Addresses   []string `json:"addresses"`
+}
+
+func connectionInterfaceKind(name string) string {
+	return link.Kind(name)
+}
+
+// GetConnectionInterfaces lists usable Windows IP adapters. A standard
+// USB-C host port is not exposed as a direct link unless Windows has
+// established USB4NET or the bridge driver offers a network adapter.
+func (a *App) GetConnectionInterfaces() []ConnectionInterface {
+	adapters := link.RefreshAdapters()
+	result := make([]ConnectionInterface, 0, len(adapters))
+	for _, adapter := range adapters {
+		result = append(result, ConnectionInterface{
+			Name: adapter.Name, Description: adapter.Description, Kind: adapter.Kind,
+			Addresses: adapter.Addresses,
+		})
+	}
+	return result
 }

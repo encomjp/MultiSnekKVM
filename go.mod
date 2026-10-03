@@ -3,9 +3,12 @@ module multisnekkvm
 go 1.25.0
 
 require (
+	github.com/backkem/spake2-go v0.0.1
 	github.com/energye/systray v1.0.3
 	github.com/hraban/opus v0.0.0-20251117090126-c76ea7e21bf3
 	github.com/wailsapp/wails/v2 v2.11.0
+	go.dedis.ch/fixbuf v1.0.3 // indirect
+	go.dedis.ch/kyber/v4 v4.0.0-pre2 // indirect
 	golang.org/x/sys v0.42.0
 )
 

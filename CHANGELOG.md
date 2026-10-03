@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-10-03
+
+### Breaking
+
+- First-time pairing now uses a certificate-bound SPAKE2 exchange; the six-digit PIN is no longer sent on the wire. Both devices must run 0.3.0 or later to pair. Already-trusted peers reconnect without re-pairing.
+
+### Changed
+
+- New interface: sidebar navigation, Session screen (route, latency, jitter, audio, screen arrangement, activity feed with Save/Discard for received files), Devices screen with per-route radio picker and adapter panel, Settings split into Input & screens, Audio, Startup, Security and Diagnostics, dark/light/system theme. Bundled Geist fonts (no network requests).
+- Frontend rebuilt on Svelte 5, Vite 7 and strict TypeScript with typed Go bindings, per-setting save state and a consistent lockfile (`npm ci`).
+- Desktop audio transport has a new default, `auto`: PCM over USB4/USB-bridge/Ethernet, Opus over Wi-Fi, Tailscale and Bluetooth. Old settings with the previous `pcm` default are migrated once.
+- Microphone always uses Opus (mono, 64 kb/s, no DTX/FEC).
+
+### Added
+
+- Automatic route selection: peer addresses are ranked by the Windows adapter actually used (USB4/Thunderbolt, USB network bridge, Ethernet, LAN, Wi-Fi, other, Tailscale, Bluetooth PAN). Manual connect falls back to other addresses of the same device on network failures only.
+- USB4/Thunderbolt, USB bridge and Bluetooth PAN setup guide and local adapter list.
+- Session status shows the actual route and remote address; `health-alert` events are shown in the UI.
+- Adaptive audio jitter buffer with clock-drift compensation, shared by microphone and desktop audio.
+- PR validation CI: Go tests, race tests, gofmt, go vet, tidy modules, frontend type-check, tests and build.
+
+### Fixed
+
+- Microphone passthrough: loud white noise (the controller reset its receiver mid-stream and played Opus packets as PCM), and "erased"/gated audio (mic frames dropped by a shared send queue, whole buffers of silence on every hiccup, chunk cuts from sound-card clock drift, Opus DTX). Format changes can no longer overtake audio data.
+- Audio has its own send lane, so heavy audio can no longer push out keystrokes and close the session.
+- Changing an audio device reopens the stream instead of stopping it; "Mute source" is now applied.
+- A stalled unauthenticated client could block all connections: TLS handshake and pairing now run outside the connection lock.
+- Received-file Save/Discard only accept folders the app created.
+- Auto-reconnect stops on trust/certificate failures; sleep no longer starts reconnect attempts.
+- File transfers apply back-pressure instead of dropping chunks (which aborted transfers).
+- Hooks ignore injected events; modifiers are only released on the side that injected them.
+- Edge-trigger bounds refresh after monitor changes; edge-loop and startup races fixed; discovery goroutines are panic-safe and capped.
+- Settings are written atomically; rejected values are no longer saved.
+- Outbound connections fail closed when the trust store is unavailable; revoking trust disconnects the active session.
+- Outbound TLS dial and handshake are time-bounded; short protocol writes are reported as errors.
+- Dropped key, mouse-button, text or switch-back frames close the session so held input is released on both sides.
+- Stale held remote mouse buttons are released by the input watchdog (previously keys only).
+- File transfer validates chunk bounds and ordering, uses unique temporary directories and rejects duplicate offers.
+
+### Performance
+
+- Network adapter and route lookups are cached instead of re-enumerated (and a UDP socket opened per address) on every peer/session query while holding the input lock.
+- UI events are only emitted on change; clipboard polling skips unchanged clipboards; cached screen metrics for injection; fewer allocations in the frame, mouse and audio paths; quieter idle logging.
+
+### Removed
+
+- About 25 KB of dead UI components, the unused drag-and-drop capture code and four duplicated WASAPI loops.
+- `Startup`/`Shutdown`/`BeforeClose` are no longer exposed to JavaScript.
+
+### Security note
+
+- The SPAKE2 implementation (`github.com/backkem/spake2-go` v0.0.1, with pre-release `go.dedis.ch/kyber/v4`) passes RFC 9382 test vectors but has not been independently audited.
+
 ## [0.2.0] - 2026-04-10
 
 ### Fixed

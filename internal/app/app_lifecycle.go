@@ -11,22 +11,10 @@ func (a *App) sendFrame(f Frame) error {
 	if a.transport == nil {
 		return fmt.Errorf("transport unavailable")
 	}
-	start := time.Now()
-	err := a.transport.Send(f)
-	if ms := time.Since(start).Milliseconds(); ms >= 10 {
-		log.Printf("sendFrame: slow write type=0x%02x took=%dms", f.Type, ms)
-	}
-	if err != nil {
-		log.Printf("send frame 0x%02x failed: %v", f.Type, err)
-	}
-	return err
+	// Slow writes and failures are logged (rate-limited) by muxSend, the
+	// only caller.
+	return a.transport.Send(f)
 }
-
-// handleEdgeDrag is called when a drag (left mouse button held) is detected
-// at the screen edge during a control transition.
-// Disabled: OLE drag capture conflicts with the multi-monitor edge transition;
-// the drag does not cross to the second monitor reliably. To be reworked.
-func (a *App) handleEdgeDrag() {}
 
 func (a *App) sendEdgeConfig() {
 	if a.transport == nil || a.inputHook == nil || a.transport.GetSession() == nil {
@@ -76,6 +64,10 @@ func (a *App) notePeerControlInput(forceWake bool) (activated bool, allowed bool
 	}
 	allowed = true
 	a.mu.Unlock()
+	if !forceWake {
+		// The caller is about to inject input on this (controlled) machine.
+		atomic.StoreUint32(&a.injectedInputN, 1)
+	}
 	atomic.StoreInt64(&a.lastRemoteInputNs, time.Now().UnixNano())
 	return activated, allowed
 }
@@ -122,20 +114,26 @@ func (a *App) releaseInjectedRemoteKeysLocked() {
 			InjectMouseClick(byte(i), false)
 		}
 	}
-	// Unconditionally release all modifier keys to prevent stuck modifiers
-	// that can occur when the remote side releases a key after the session
-	// is already torn down (or the key-up is lost in transit).
-	ReleaseAllModifiers()
+	// Release all modifier keys to prevent stuck modifiers that can occur
+	// when the remote side releases a key after the session is already torn
+	// down (or the key-up is lost in transit). Only done where remote input
+	// was actually injected (the controlled side): on the controller these
+	// synthetic key-ups would fight the user's physical keyboard.
+	if atomic.SwapUint32(&a.injectedInputN, 0) != 0 {
+		ReleaseAllModifiers()
+	}
 	// Clear the fast-path flag so handleRemoteMouseMove skips touchRemoteKeyWatchdog.
 	atomic.StoreUint64(&a.remoteInputActiveN, 0)
 }
 
 func (a *App) touchRemoteKeyWatchdog() {
+	// Called right after injecting remote input.
+	atomic.StoreUint32(&a.injectedInputN, 1)
 	// Stamp every inbound control input for the controlled-mode inactivity watchdog.
 	atomic.StoreInt64(&a.lastRemoteInputNs, time.Now().UnixNano())
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.remoteKeyState.HasPressed() {
+	if !a.remoteKeyState.HasPressed() && !anyRemoteMouseButtonHeld(a.remoteMouseButtons) {
 		a.remoteKeyDeadline = time.Time{}
 		if a.remoteKeyTimer != nil {
 			a.remoteKeyTimer.Stop()
@@ -160,7 +158,7 @@ func anyRemoteMouseButtonHeld(buttons [3]bool) bool {
 func (a *App) handleRemoteKeyWatchdog() {
 	a.mu.Lock()
 	deadline := a.remoteKeyDeadline
-	hasPressed := a.remoteKeyState.HasPressed()
+	hasPressed := a.remoteKeyState.HasPressed() || anyRemoteMouseButtonHeld(a.remoteMouseButtons)
 	if !hasPressed || deadline.IsZero() {
 		a.mu.Unlock()
 		return

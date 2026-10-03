@@ -1,259 +1,210 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import type { Peer } from '../lib/api/types';
+import { normalizePeer, normalizeSession, normalizeTriggerZone } from '../lib/api/normalize';
+import { captureHotkey, hotkeyKeys, hotkeyLabel, vkName } from '../lib/hotkeys';
 import {
-  normalizeTailscale,
-  shortId,
+  addressLabel,
+  endpointLabel,
+  errorMessage,
+  formatLatency,
+  formatPin,
+  healthSummary,
+  hostOf,
+  interfaceLabel,
+  jitterLabel,
+  lastPeerAddress,
+  lastPeerRoute,
+  latencyQuality,
+  orderedRoutes,
+  peerRoutes,
+  routeLabel,
+  sanitizePin,
   shortFingerprint,
   timeAgo,
-  orderedRoutes,
-  routeLabel,
-  preferredRouteLabel,
-  sessionStateLabel,
-  meshStateLabel,
-  peerAddresses,
-  trustLabel,
-  copyToClipboard,
-  formatLatency,
-  healthSummary,
 } from '../lib/utils';
 
-describe('normalizeTailscale', () => {
-  it('returns defaults for null input', () => {
-    const result = normalizeTailscale(null);
-    expect(result.available).toBe(false);
-    expect(result.connected).toBe(false);
-    expect(result.selfIPs).toEqual([]);
-    expect(result.peerCount).toBe(0);
-  });
-
-  it('merges partial status over defaults', () => {
-    const result = normalizeTailscale({ available: true, peerCount: 5 });
-    expect(result.available).toBe(true);
-    expect(result.peerCount).toBe(5);
-    expect(result.connected).toBe(false);
-  });
-
-  it('preserves selfIPs array from input', () => {
-    const result = normalizeTailscale({ selfIPs: ['100.64.0.1'] });
-    expect(result.selfIPs).toEqual(['100.64.0.1']);
-  });
-
-  it('defaults selfIPs to [] when missing from input', () => {
-    const result = normalizeTailscale({ available: true });
-    expect(result.selfIPs).toEqual([]);
-  });
-});
-
-describe('shortId', () => {
-  it('truncates to 12 characters', () => {
-    expect(shortId('abcdef123456789')).toBe('abcdef123456');
-  });
-
-  it('returns full id if shorter than 12', () => {
-    expect(shortId('abc')).toBe('abc');
-  });
-
-  it('returns "unassigned" for falsy input', () => {
-    expect(shortId('')).toBe('unassigned');
-    expect(shortId(null)).toBe('unassigned');
-    expect(shortId(undefined)).toBe('unassigned');
-  });
-});
-
-describe('shortFingerprint', () => {
-  it('formats fingerprint with colon separators', () => {
-    const fp = 'AABBCCDDEEFF112233445566';
-    const result = shortFingerprint(fp);
-    expect(result).toBe('AABB:CCDD:EEFF:1122:3344:5566');
-  });
-
-  it('returns "pending" for falsy input', () => {
-    expect(shortFingerprint('')).toBe('pending');
-    expect(shortFingerprint(null)).toBe('pending');
-  });
-
-  it('truncates long fingerprints to 24 chars before formatting', () => {
-    const fp = 'AABBCCDDEEFF112233445566EXTRA';
-    const result = shortFingerprint(fp);
-    expect(result).toBe('AABB:CCDD:EEFF:1122:3344:5566');
-  });
-});
-
-describe('timeAgo', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-03-26T12:00:00Z'));
-  });
-
-  it('returns "never" for falsy timestamp', () => {
-    expect(timeAgo(0)).toBe('never');
-    expect(timeAgo(null)).toBe('never');
-  });
-
-  it('returns "just now" for < 5 seconds ago', () => {
-    const now = Math.floor(Date.now() / 1000);
-    expect(timeAgo(now - 2)).toBe('just now');
-  });
-
-  it('returns seconds for < 60 seconds ago', () => {
-    const now = Math.floor(Date.now() / 1000);
-    expect(timeAgo(now - 30)).toBe('30s ago');
-  });
-
-  it('returns minutes for < 1 hour ago', () => {
-    const now = Math.floor(Date.now() / 1000);
-    expect(timeAgo(now - 180)).toBe('3m ago');
-  });
-
-  it('returns hours for < 1 day ago', () => {
-    const now = Math.floor(Date.now() / 1000);
-    expect(timeAgo(now - 7200)).toBe('2h ago');
-  });
-
-  it('returns days for >= 1 day ago', () => {
-    const now = Math.floor(Date.now() / 1000);
-    expect(timeAgo(now - 172800)).toBe('2d ago');
-  });
-});
-
-describe('orderedRoutes', () => {
-  it('sorts lan before tailscale before manual', () => {
-    expect(orderedRoutes(['manual', 'tailscale', 'lan'])).toEqual(['lan', 'tailscale', 'manual']);
-  });
-
-  it('handles empty array', () => {
-    expect(orderedRoutes([])).toEqual([]);
-  });
-
-  it('handles undefined', () => {
-    expect(orderedRoutes(undefined)).toEqual([]);
-  });
-
-  it('puts unknown routes last', () => {
-    expect(orderedRoutes(['unknown', 'lan'])).toEqual(['lan', 'unknown']);
-  });
-});
+function peer(overrides: Partial<Peer> = {}): Peer {
+  return normalizePeer({ id: 'p', name: 'P', address: '10.0.0.2:24831', ...overrides });
+}
 
 describe('routeLabel', () => {
-  it('maps lan to LAN', () => expect(routeLabel('lan')).toBe('LAN'));
-  it('maps tailscale to Tailnet', () => expect(routeLabel('tailscale')).toBe('Tailnet'));
-  it('maps manual to Manual', () => expect(routeLabel('manual')).toBe('Manual'));
-  it('returns unknown routes as-is', () => expect(routeLabel('wireguard')).toBe('wireguard'));
-});
-
-describe('preferredRouteLabel', () => {
-  it('returns "Auto" for falsy input', () => {
-    expect(preferredRouteLabel('')).toBe('Auto');
-    expect(preferredRouteLabel(null)).toBe('Auto');
+  it.each([
+    ['usb4', 'USB4 / Thunderbolt'],
+    ['usb-bridge', 'USB network bridge'],
+    ['ethernet', 'Ethernet'],
+    ['wifi', 'Wi-Fi'],
+    ['bluetooth', 'Bluetooth PAN'],
+    ['network', 'Network'],
+    ['tailscale', 'Tailnet'],
+    ['lan', 'LAN'],
+    ['manual', 'Manual'],
+    ['', 'Auto'],
+    ['carrier-pigeon', 'carrier-pigeon'],
+  ])('%s -> %s', (route, label) => {
+    expect(routeLabel(route)).toBe(label);
   });
 
-  it('delegates to routeLabel for truthy input', () => {
-    expect(preferredRouteLabel('lan')).toBe('LAN');
-  });
-});
-
-describe('sessionStateLabel', () => {
-  it('returns Idle when not connected', () => {
-    expect(sessionStateLabel({ connected: false })).toBe('Idle');
+  it('handles missing routes and adapter kinds', () => {
+    expect(routeLabel(undefined)).toBe('Auto');
+    expect(routeLabel(null)).toBe('Auto');
+    expect(interfaceLabel('network')).toBe('Network adapter');
+    expect(interfaceLabel('usb4')).toBe('USB4 / Thunderbolt');
   });
 
-  it('returns Controlling when controlling', () => {
-    expect(sessionStateLabel({ connected: true, controlling: true })).toBe('Controlling');
-  });
-
-  it('returns Controlled when role is controlled', () => {
-    expect(sessionStateLabel({ connected: true, controlling: false, role: 'controlled' })).toBe('Controlled');
-  });
-
-  it('returns Connected for other connected states', () => {
-    expect(sessionStateLabel({ connected: true, controlling: false, role: 'controller' })).toBe('Connected');
-  });
-});
-
-describe('meshStateLabel', () => {
-  it('returns Unavailable when not available', () => {
-    expect(meshStateLabel({ available: false })).toBe('Unavailable');
-  });
-
-  it('returns Connected when available and connected', () => {
-    expect(meshStateLabel({ available: true, connected: true })).toBe('Connected');
-  });
-
-  it('returns backendState when available but not connected', () => {
-    expect(meshStateLabel({ available: true, connected: false, backendState: 'NeedsLogin' })).toBe('NeedsLogin');
-  });
-
-  it('returns Degraded when backendState is empty', () => {
-    expect(meshStateLabel({ available: true, connected: false, backendState: '' })).toBe('Degraded');
+  it('orders routes by backend preference', () => {
+    expect(orderedRoutes(['manual', 'tailscale', 'wifi', 'usb4', 'bluetooth', 'ethernet', 'lan', 'usb-bridge', 'network'])).toEqual([
+      'usb4',
+      'usb-bridge',
+      'ethernet',
+      'lan',
+      'wifi',
+      'network',
+      'tailscale',
+      'bluetooth',
+      'manual',
+    ]);
   });
 });
 
-describe('peerAddresses', () => {
-  it('joins addresses with comma', () => {
-    expect(peerAddresses({ addresses: ['192.168.1.1:24831', '100.64.0.2:24831'] })).toBe('192.168.1.1:24831, 100.64.0.2:24831');
+describe('endpoint labels', () => {
+  it('classifies addresses by IP range', () => {
+    expect(endpointLabel('169.254.22.15:24831')).toBe('Direct link');
+    expect(endpointLabel('100.92.10.17:24831')).toBe('Tailnet / CGNAT');
+    expect(endpointLabel('100.128.0.1')).toBe('Network');
+    expect(endpointLabel('192.168.0.42:24831')).toBe('Network');
+    expect(endpointLabel('[fe80::1]:24831')).toBe('Direct link');
+    expect(endpointLabel('studio.local:24831')).toBe('Network');
   });
 
-  it('returns empty string for no addresses', () => {
-    expect(peerAddresses({ addresses: [] })).toBe('');
-    expect(peerAddresses({})).toBe('');
+  it('strips ports and IPv6 brackets', () => {
+    expect(hostOf('192.168.0.42:24831')).toBe('192.168.0.42');
+    expect(hostOf('[fe80::1]:24831')).toBe('fe80::1');
+    expect(hostOf('fe80::1')).toBe('fe80::1');
+    expect(hostOf('studio')).toBe('studio');
+  });
+
+  it('prefers backend address kinds over IP guesses', () => {
+    const p = peer({ addressKinds: { '192.168.0.42:24831': 'ethernet' } });
+    expect(addressLabel(p, '192.168.0.42:24831')).toBe('Ethernet');
+    expect(addressLabel(p, '169.254.1.1:24831')).toBe('Direct link');
+  });
+
+  it('lists routes with the recommended address first', () => {
+    const p = peer({
+      address: '169.254.22.15:24831',
+      addresses: ['100.92.10.17:24831', '192.168.0.42:24831', '169.254.22.15:24831'],
+      addressKinds: { '169.254.22.15:24831': 'usb4', '192.168.0.42:24831': 'ethernet', '100.92.10.17:24831': 'tailscale' },
+    });
+    expect(peerRoutes(p).map((r) => [r.label, r.best])).toEqual([
+      ['USB4 / Thunderbolt', true],
+      ['Ethernet', false],
+      ['Tailnet', false],
+    ]);
   });
 });
 
-describe('trustLabel', () => {
-  it('returns "Pinned" for trusted peers', () => {
-    expect(trustLabel({ trusted: true })).toBe('Pinned');
-  });
-
-  it('returns PIN label for untrusted peers', () => {
-    expect(trustLabel({ trusted: false })).toBe('PIN required');
-  });
-
-  it('handles null peer', () => {
-    expect(trustLabel(null)).toBe('PIN required');
+describe('last peer', () => {
+  it('picks the address by route preference', () => {
+    expect(lastPeerAddress({ id: 'x', tailscale: '100.1.1.1', wifi: '192.168.0.5', usb4: '169.254.0.2' })).toBe('169.254.0.2');
+    expect(lastPeerAddress({ id: 'x', bluetooth: '10.0.0.1', manual: '10.0.0.2' })).toBe('10.0.0.1');
+    expect(lastPeerAddress({ id: 'x', address: '10.0.0.3' })).toBe('10.0.0.3');
+    expect(lastPeerAddress(null)).toBe('');
+    expect(lastPeerRoute({ id: 'x', wifi: 'a', tailscale: 'b' })).toBe('wifi');
+    expect(lastPeerRoute({ id: 'x', address: 'a' })).toBe('');
   });
 });
 
-describe('copyToClipboard', () => {
-  it('does nothing for falsy value', async () => {
-    await expect(copyToClipboard('')).resolves.toBeUndefined();
-    await expect(copyToClipboard(null)).resolves.toBeUndefined();
-  });
-});
-
-describe('formatLatency', () => {
-  it('returns Measuring... for null', () => {
-    expect(formatLatency(null)).toBe('Measuring...');
-  });
-
-  it('returns Measuring... for negative values', () => {
-    expect(formatLatency(-1)).toBe('Measuring...');
-  });
-
-  it('returns <1 ms for zero', () => {
+describe('formatting', () => {
+  it('formats latency', () => {
+    expect(formatLatency(-1)).toBe('Measuring…');
+    expect(formatLatency(undefined)).toBe('Measuring…');
     expect(formatLatency(0)).toBe('<1 ms');
+    expect(formatLatency(12)).toBe('12 ms');
+    expect(formatLatency(1.84)).toBe('1.8 ms');
   });
 
-  it('returns ms value for positive numbers', () => {
-    expect(formatLatency(42)).toBe('42 ms');
-    expect(formatLatency(1)).toBe('1 ms');
-    expect(formatLatency(999)).toBe('999 ms');
+  it('grades latency and jitter', () => {
+    expect(latencyQuality(-1)).toBe('unknown');
+    expect(latencyQuality(2)).toBe('excellent');
+    expect(latencyQuality(15)).toBe('good');
+    expect(latencyQuality(45)).toBe('fair');
+    expect(latencyQuality(120)).toBe('poor');
+    expect(jitterLabel(-1)).toBe('Measuring');
+    expect(jitterLabel(1)).toBe('Stable');
+    expect(jitterLabel(30)).toBe('Unstable');
+  });
+
+  it('formats PINs and fingerprints', () => {
+    expect(formatPin('482911')).toBe('482 911');
+    expect(sanitizePin('48-29 11 7')).toBe('482911');
+    expect(shortFingerprint('4FA2C19B8DD44A89A0FE31C19D68D2F17E05B69C')).toBe('4F:A2:…:9C');
+    expect(shortFingerprint('')).toBe('pending');
+  });
+
+  it('formats relative time', () => {
+    const now = 1_000_000;
+    expect(timeAgo(0, now)).toBe('never');
+    expect(timeAgo(now - 3, now)).toBe('just now');
+    expect(timeAgo(now - 120, now)).toBe('2 min ago');
+    expect(timeAgo(now - 3600, now)).toBe('1 hour ago');
+    expect(timeAgo(now - 2 * 86400, now)).toBe('2 days ago');
+  });
+
+  it('summarises health', () => {
+    const base = { healthy: true, reconnecting: false, subsystems: [], uptime: 0, goroutines: 0, goroutineDelta: 0 };
+    expect(healthSummary(base)).toEqual({ label: 'All normal', tone: 'ok' });
+    expect(healthSummary({ ...base, reconnecting: true }).tone).toBe('warn');
+    expect(healthSummary({ ...base, subsystems: [{ name: 'Audio', healthy: false, detail: '' }] })).toEqual({
+      label: 'Degraded: Audio',
+      tone: 'bad',
+    });
+  });
+
+  it('extracts error messages', () => {
+    expect(errorMessage('boom', 'fallback')).toBe('boom');
+    expect(errorMessage(new Error('bad'), 'fallback')).toBe('bad');
+    expect(errorMessage({}, 'fallback')).toBe('fallback');
   });
 });
 
-describe('healthSummary', () => {
-  it('returns Unknown for null', () => {
-    expect(healthSummary(null)).toBe('Unknown');
+describe('normalizers', () => {
+  it('fills nil slices and defaults from Go', () => {
+    const p = normalizePeer({ id: 'a', address: '10.0.0.1:24831', addresses: null, routes: null, addressKinds: null });
+    expect(p.addresses).toEqual(['10.0.0.1:24831']);
+    expect(p.routes).toEqual([]);
+    expect(p.addressKinds).toEqual({});
+    expect(normalizeSession(null)).toMatchObject({ connected: false, latencyMs: -1, jitterMs: -1 });
+    expect(normalizeTriggerZone({})).toBeNull();
+    expect(normalizeTriggerZone({ monitorID: 'm', side: 'top', startPct: 0.2, endPct: 0 })).toEqual({
+      monitorID: 'm',
+      side: 'top',
+      startPct: 0.2,
+      endPct: 1,
+    });
+  });
+});
+
+describe('hotkeys', () => {
+  const key = (overrides: Partial<KeyboardEvent>) =>
+    ({ key: 'x', keyCode: 0, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...overrides }) as KeyboardEvent;
+
+  it('names keys and combinations', () => {
+    expect(vkName(0x24)).toBe('Home');
+    expect(vkName(0x41)).toBe('A');
+    expect(vkName(0x77)).toBe('F8');
+    expect(hotkeyKeys({ modifiers: 0, vkCode: 0 })).toEqual(['Esc']);
+    expect(hotkeyLabel({ modifiers: 1 | 4, vkCode: 0x24 })).toBe('Ctrl + Shift + Home');
   });
 
-  it('returns Reconnecting when reconnecting', () => {
-    expect(healthSummary({ reconnecting: true, subsystems: [] })).toBe('Reconnecting...');
-  });
-
-  it('returns Healthy when all subsystems ok', () => {
-    expect(healthSummary({ reconnecting: false, subsystems: [{ name: 'transport', healthy: true }] })).toBe('Healthy');
-  });
-
-  it('returns Degraded with unhealthy subsystem names', () => {
-    const health = { reconnecting: false, subsystems: [{ name: 'transport', healthy: true }, { name: 'tailscale', healthy: false }] };
-    expect(healthSummary(health)).toBe('Degraded: tailscale');
+  it('captures valid combinations and rejects unsafe ones', () => {
+    expect(captureHotkey(key({ key: 'Escape' }))).toEqual({ kind: 'cancel' });
+    expect(captureHotkey(key({ key: 'Shift', shiftKey: true })).kind).toBe('ignore');
+    expect(captureHotkey(key({ key: 'a', keyCode: 0x41 })).kind).toBe('invalid');
+    expect(captureHotkey(key({ key: 'Home', keyCode: 0x24, ctrlKey: true, altKey: true })).kind).toBe('invalid');
+    expect(captureHotkey(key({ key: 'F9', keyCode: 0x78 }))).toEqual({ kind: 'ok', hotkey: { modifiers: 0, vkCode: 0x78 } });
+    expect(captureHotkey(key({ key: 'Home', keyCode: 0x24, ctrlKey: true, shiftKey: true }))).toEqual({
+      kind: 'ok',
+      hotkey: { modifiers: 5, vkCode: 0x24 },
+    });
   });
 });

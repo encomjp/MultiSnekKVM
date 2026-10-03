@@ -6,7 +6,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Wails](https://img.shields.io/badge/Wails-v2-C92A2A?logo=webassembly&logoColor=white)](https://wails.io)
-[![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
+[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)]()
 [![Release](https://img.shields.io/github/v/release/encomjp/MultiSnekKVM?logo=github&label=Release)](https://github.com/encomjp/MultiSnekKVM/releases/latest)
 [![License](https://img.shields.io/github/license/encomjp/MultiSnekKVM?color=blue)](LICENSE)
@@ -24,32 +24,15 @@ Keyboard, clipboard, audio, and mic follow seamlessly.
 
 ---
 
-## 🖼️ Screens
+## 🖼️ The app
 
-<table>
-<tr>
-<td colspan="2" align="center">
-<img src="docs/screenshots/connected-preview.png" alt="MultiSnek overview showing an active session on Studio PC" width="100%" />
-<br>
-<strong>Fast handoff between real workstations</strong><br>
-<sub>Jump into Studio PC with the live session state front and center instead of buried in a busy control panel.</sub>
-</td>
-</tr>
-<tr>
-<td align="center" width="56%">
-<img src="docs/screenshots/devices-preview.png" alt="MultiSnek device inventory showing Studio PC, Travel Laptop, and Gaming Rig" width="100%" />
-<br>
-<strong>Clear device inventory</strong><br>
-<sub>See trusted machines like Studio PC and Travel Laptop alongside manual targets like Gaming Rig before you connect.</sub>
-</td>
-<td align="center" width="44%">
-<img src="docs/screenshots/audio-card-preview.png" alt="MultiSnek audio settings for remote audio playback" width="100%" />
-<br>
-<strong>Audio routing built for daily use</strong><br>
-<sub>Choose how remote audio lands on this machine without digging through a noisy control panel.</sub>
-</td>
-</tr>
-</table>
+A sidebar keeps three screens one click away, with **This PC** (listening status and the pairing PIN, hidden until you ask) always at the bottom. Dark and light themes follow Windows or your choice.
+
+| Screen | What you get |
+|--------|--------------|
+| **Session** | Who you are controlling, the route in use (USB4, Ethernet, Wi-Fi, Tailnet, ...), latency, jitter and audio at a glance; a sketch of your screen arrangement; an activity feed where received files wait for **Save to Downloads** or **Discard**; quick audio, microphone and auto-reconnect controls; live subsystem health and alerts. |
+| **Devices** | Every known PC with its online and pairing state. PCs reachable over several routes list them as radio buttons with the best one marked, so you can pick the route for the next connection. New PCs are paired once with their six-digit PIN (**Pair & connect**). A side panel shows this PC's adapters and how to link over USB4 or Bluetooth. |
+| **Settings** | **Input & screens** (hand-off edge, monitor layout with a draggable hand-off zone and return point, pointer speed, exit hotkey recorder), **Audio** (direction, devices, Auto/PCM/Opus transport, microphone), **Startup** (autostart, tray, theme), **Security** (certificate fingerprint, paired devices, Tailscale) and **Diagnostics** (health, load counters, log analysis, copyable recent logs). |
 
 ---
 
@@ -76,15 +59,15 @@ Keyboard, clipboard, audio, and mic follow seamlessly.
 | 📋 | **Clipboard Sync** | Copy on one PC, paste on the other — instant, bidirectional |
 | 🔊 | **Desktop Audio Streaming** | Hear the remote PC's audio or broadcast yours (WASAPI loopback) |
 | 🎤 | **Microphone Forwarding** | Send your mic to the remote PC or hear theirs |
-| 🔒 | **Trust-on-First-Use Security** | ECDSA P-256 certs, TLS 1.3, fingerprint-pinned peer trust |
+| 🔒 | **Authenticated Peer Trust** | TLS 1.3, certificate-bound SPAKE2 PIN pairing, fingerprint-pinned reconnects |
 | 🌐 | **LAN + Tailscale Discovery** | Auto-discovers peers via UDP broadcast and Tailscale status |
 | 🔄 | **Auto-Reconnect** | Exponential backoff reconnection on unexpected disconnect |
-| 💓 | **Health Monitor** | Real-time subsystem health checks with frontend status display |
-| 📊 | **Latency Display** | Live ping/pong RTT measurement between peers |
+| 💓 | **Health Monitor** | Real-time subsystem health checks and alerts on the Session screen and in Settings → Diagnostics |
+| 📊 | **Latency Display** | Live ping/pong RTT and jitter between peers |
 | 🛡️ | **Process Watchdog** | Supervisor/child pattern auto-restarts on crash |
 | 🧵 | **Goroutine Recovery** | `SafeGoRestart` wraps background goroutines with panic recovery |
 | 🖥️ | **System Tray** | Minimize to tray, quick access controls |
-| 📂 | **File Transfer** | Send files to the connected peer via the Send Files button |
+| 📂 | **File Transfer** | Send files with the Send files button; received files wait in Session → Activity until you save or discard them |
 
 ### ⚠️ Known Issues
 
@@ -114,11 +97,25 @@ Output: `build/bin/Multisnek.exe`
 
 | Scenario | Behavior |
 |----------|----------|
-| **First contact** | Trust-on-first-use pins the peer certificate on the first successful connection in either direction |
+| **First contact** | Enter the six-digit PIN shown on the remote device. A certificate-bound SPAKE2 exchange verifies both peers before their certificates are pinned; the PIN itself is never sent on the wire |
 | **Known peer** | Future sessions must present the same fingerprint or the connection is rejected |
 | **Identity change** | Regenerated certificates or renamed identities require re-trust before traffic is accepted |
 
-Connections still run over TLS 1.3 with device certificates and fingerprint pinning.
+Connections run over TLS 1.3 with device certificates and fingerprint pinning. Existing trusted peers reconnect without the PIN. For new pairing, **both devices must run a version supporting SPAKE2**; insecure legacy plaintext-PIN pairing is rejected. The current SPAKE2 dependency has not yet received an independent security audit, so security-sensitive deployments should review the pairing implementation before release.
+
+## 🔌 Direct USB4, Thunderbolt and Bluetooth connections
+
+MultiSnek's existing TCP/TLS transport can use **any functioning IP network adapter**. The app discovers peer addresses on usable adapters, prefers USB4/Thunderbolt networking and supported network-class USB bridges, then other wired and wireless routes, and retries alternate addresses after network connection failures. It does not switch the transport under an active KVM session. A manually selected address is tried first. Authentication failures never cause an automatic route fallback. It does not need a separate raw USB or Bluetooth protocol. The **Devices** screen lists this PC's adapters (with **Connect over USB4 or Bluetooth** guidance) and, for each peer, its available routes as radio buttons with the best one marked.
+
+- **USB4 / Thunderbolt:** On compatible Windows 11 PCs, connect with a suitable USB4/Thunderbolt cable. Windows can create an Ethernet-over-USB4 (USB4NET) adapter with an automatically assigned `169.254.x.x` address. Find each PC's address in the Devices adapters panel or with `ipconfig`, and enter **the other PC's** address in MultiSnek. Pick the direct-link route in the peer's route list when both LAN/Tailscale and the direct link are present.
+- **Bluetooth PAN:** Pair the computers. If the host supports a Bluetooth hotspot/PAN service, enable it and join the PAN in Windows' Bluetooth device settings. Once each device has an IP-capable Bluetooth network connection, enter the peer's PAN address manually. This is a fallback for input/clipboard; Bluetooth bandwidth and latency can limit audio and file transfers.
+- **Other wired links:** Ordinary Ethernet or dedicated USB transfer/bridge hardware **only if its driver exposes a working IP adapter** can use the same manual-address workflow.
+
+An ordinary USB-C charging/data cable between two standard USB hosts **does not** create a PC-to-PC network. USB4/Thunderbolt interdomain networking requires compatible hardware, OS support and a suitable cable. A file-transfer-only USB bridge cable is not automatically compatible, and raw WinUSB/libusb endpoints are not enabled without a supported bridge controller and its documented framing/driver API.
+
+**Troubleshooting:** Confirm the adapter is up on both PCs, test reachability to the peer's IP, allow MultiSnek's TCP port `24831` through Windows Firewall on the new network, and use the actual peer IP rather than the hostname if Windows selects Wi-Fi instead of the direct link. Standard LAN discovery uses IPv4 broadcasts; if discovery is blocked, add the peer IP manually. This feature does not install network drivers or automatically establish a Bluetooth PAN.
+
+References: [Microsoft USB4 interdomain networking](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/usb4-interdomain-connections) · [Microsoft Bluetooth PAN setup](https://support.microsoft.com/en-us/windows/hardware/bluetooth/connect-to-a-bluetooth-network-in-windows)
 
 ## ⚙️ Requirements
 

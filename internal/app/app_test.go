@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -8,27 +9,6 @@ import (
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/protocol"
 )
-
-type fakeOutboundRealtimeStream struct {
-	name   string
-	events *[]string
-}
-
-func (f *fakeOutboundRealtimeStream) Configure(transportMode, profile string, format []byte) ([]protocol.Frame, error) {
-	_ = transportMode
-	_ = profile
-	_ = format
-	return nil, nil
-}
-
-func (f *fakeOutboundRealtimeStream) ProcessData(payload []byte) ([]protocol.Frame, error) {
-	_ = payload
-	return nil, nil
-}
-
-func (f *fakeOutboundRealtimeStream) Reset() {
-	*f.events = append(*f.events, f.name+"-reset")
-}
 
 func TestPreferredRoutePrefersLAN(t *testing.T) {
 	route := preferredRoute([]string{"tailscale", "lan", "manual"})
@@ -316,7 +296,7 @@ func TestReleaseInjectedRemoteKeysReleasesHeldMouseButtons(t *testing.T) {
 	}
 }
 
-func TestRemoteKeyWatchdogDoesNotFireForMouseButtonHoldOnly(t *testing.T) {
+func TestRemoteKeyWatchdogReleasesStaleMouseButtonHold(t *testing.T) {
 	originalInjectMouseClick := InjectMouseClick
 	originalTimeout := remoteKeyIdleTimeout
 	defer func() {
@@ -325,18 +305,24 @@ func TestRemoteKeyWatchdogDoesNotFireForMouseButtonHoldOnly(t *testing.T) {
 	}()
 
 	remoteKeyIdleTimeout = 20 * time.Millisecond
-	var clicks int
+	released := make(chan byte, 1)
 	InjectMouseClick = func(button byte, pressed bool) {
-		clicks++
+		if !pressed {
+			released <- button
+		}
 	}
 
 	a := &App{}
 	a.remoteMouseButtons[0] = true // LMB held, no keyboard keys pressed
 	a.touchRemoteKeyWatchdog()
 
-	time.Sleep(100 * time.Millisecond)
-	if clicks != 0 {
-		t.Fatalf("watchdog should not fire for mouse-button-only hold, but got %d InjectMouseClick calls", clicks)
+	select {
+	case button := <-released:
+		if button != 0 {
+			t.Fatalf("expected left mouse button release, got %d", button)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("watchdog must release a stale mouse-button-only hold")
 	}
 }
 
@@ -368,72 +354,6 @@ func TestMsgMouseClickInvalidButtonIsNotTracked(t *testing.T) {
 	}
 	if len(injected) != 1 || injected[0].button != 5 || !injected[0].pressed {
 		t.Fatalf("InjectMouseClick should still be called for untracked buttons, got %v", injected)
-	}
-}
-
-func TestRestartPassiveOutboundCapturesStopsBeforeResetAndRestarts(t *testing.T) {
-	originalAudioIsCapturing := audioIsCapturing
-	originalAudioStopCapture := audioStopCapture
-	originalAudioStartCapture := audioStartCapture
-	originalAudioIsMicCapturing := audioIsMicCapturing
-	originalAudioStopMicCapture := audioStopMicCapture
-	originalAudioStartMicCapture := audioStartMicCapture
-	defer func() {
-		audioIsCapturing = originalAudioIsCapturing
-		audioStopCapture = originalAudioStopCapture
-		audioStartCapture = originalAudioStartCapture
-		audioIsMicCapturing = originalAudioIsMicCapturing
-		audioStopMicCapture = originalAudioStopMicCapture
-		audioStartMicCapture = originalAudioStartMicCapture
-	}()
-
-	var events []string
-	audioIsCapturing = func(a *AudioStreamer) bool {
-		_ = a
-		return true
-	}
-	audioStopCapture = func(a *AudioStreamer) {
-		_ = a
-		events = append(events, "audio-stop")
-	}
-	audioStartCapture = func(a *AudioStreamer, sendFn func(Frame)) error {
-		_ = a
-		_ = sendFn
-		events = append(events, "audio-start")
-		return nil
-	}
-	audioIsMicCapturing = func(a *AudioStreamer) bool {
-		_ = a
-		return true
-	}
-	audioStopMicCapture = func(a *AudioStreamer) {
-		_ = a
-		events = append(events, "mic-stop")
-	}
-	audioStartMicCapture = func(a *AudioStreamer, sendFn func(Frame)) error {
-		_ = a
-		_ = sendFn
-		events = append(events, "mic-start")
-		return nil
-	}
-
-	a := &App{
-		audio:         &AudioStreamer{},
-		sessionRole:   "controlled",
-		audioOutbound: &fakeOutboundRealtimeStream{name: "audio-out", events: &events},
-		micOutbound:   &fakeOutboundRealtimeStream{name: "mic-out", events: &events},
-	}
-
-	a.restartPassiveOutboundCaptures("audio-transport-change")
-
-	want := []string{"audio-stop", "mic-stop", "audio-out-reset", "mic-out-reset", "audio-start", "mic-start"}
-	if len(events) != len(want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-	for i, event := range want {
-		if events[i] != event {
-			t.Fatalf("events[%d] = %q, want %q (all=%v)", i, events[i], event, events)
-		}
 	}
 }
 
@@ -480,5 +400,63 @@ func TestUpdateSessionLatencyResetsJitterOnReconnect(t *testing.T) {
 	a.updateSessionLatency(5)
 	if a.jitterMs != -1 {
 		t.Fatalf("jitterMs should be -1 after reconnect+single sample, got %d", a.jitterMs)
+	}
+}
+
+func TestConnectionInterfaceKind(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"USB4 P2P Network Adapter", "usb4"},
+		{"Thunderbolt Networking", "usb4"},
+		{"Bluetooth Network Connection", "bluetooth"},
+		{"Personal Area Network", "bluetooth"},
+		{"Ethernet 4", "ethernet"},
+		{"Wi-Fi", "wifi"},
+	}
+	for _, tc := range tests {
+		if got := connectionInterfaceKind(tc.name); got != tc.want {
+			t.Errorf("connectionInterfaceKind(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPeerConnectionCandidatesPreservesSelectedRoute(t *testing.T) {
+	peers := []discovery.DiscoveredPeer{
+		{DeviceID: "peer-1", Address: "169.254.11.2:24831", Addresses: []string{
+			"169.254.11.2:24831", "192.168.0.2:24831", "100.64.11.2:24831",
+		}},
+		{DeviceID: "peer-2", Address: "192.168.0.99:24831", Addresses: []string{
+			"192.168.0.99:24831",
+		}},
+	}
+	candidates := peerConnectionCandidates("192.168.0.2:24831", peers)
+	want := []string{"192.168.0.2:24831", "169.254.11.2:24831", "100.64.11.2:24831"}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("candidates = %v, want %v", candidates, want)
+	}
+	unknown := peerConnectionCandidates("192.168.0.200:24831", peers)
+	if !reflect.DeepEqual(unknown, []string{"192.168.0.200:24831"}) {
+		t.Fatalf("unknown endpoint must not borrow other peer routes: %v", unknown)
+	}
+}
+
+func TestReconnectCandidatesPrioritizesDirectUSB4(t *testing.T) {
+	cfg := Settings{LastPeerID: "peer-usb", LastPeerName: "Laptop", LastPeerAddr: map[string]string{
+		"wifi": "192.168.0.10:24831", "bluetooth": "192.168.137.1:24831",
+	}}
+	peers := []discovery.DiscoveredPeer{{DeviceID: "peer-usb",
+		Addresses: []string{"192.168.0.11:24831", "169.254.4.2:24831"},
+		AddressKinds: map[string]string{
+			"192.168.0.11:24831": "wifi",
+			"169.254.4.2:24831":  "usb4",
+		},
+	}}
+	got, _ := reconnectCandidatesFor(cfg, peers)
+	want := []string{"169.254.4.2:24831", "192.168.0.11:24831",
+		"192.168.0.10:24831", "192.168.137.1:24831"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reconnect candidates = %v, want %v", got, want)
 	}
 }

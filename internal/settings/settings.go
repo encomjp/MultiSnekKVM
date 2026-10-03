@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"os"
@@ -15,9 +16,12 @@ type Settings struct {
 	AudioMode      string  `json:"audioMode"`
 	AudioTiming    string  `json:"audioTiming"`
 	AudioTransport string  `json:"audioTransport"`
-	AudioProfile   string  `json:"audioProfile"`
-	Autostart      bool    `json:"autostart"`
-	StartMinimized bool    `json:"startMinimized"`
+	// AudioTransportV2 marks settings written by 0.3.0+, where "auto" became
+	// the default. Older files stored the old default "pcm", which is migrated.
+	AudioTransportV2 bool   `json:"audioTransportV2,omitempty"`
+	AudioProfile     string `json:"audioProfile"`
+	Autostart        bool   `json:"autostart"`
+	StartMinimized   bool   `json:"startMinimized"`
 
 	MuteSource bool   `json:"muteSource"`
 	MicMode    string `json:"micMode"`
@@ -53,21 +57,25 @@ type Settings struct {
 }
 
 var defaultSettings = Settings{
-	EdgeSide:       "right",
-	Sensitivity:    1.0,
-	AudioMode:      "off",
-	AudioTiming:    "always",
-	AudioTransport: "pcm",
-	AudioProfile:   "balanced",
-	MicMode:        "off",
-	Autostart:      false,
-	StartMinimized: false,
+	EdgeSide:         "right",
+	Sensitivity:      1.0,
+	AudioMode:        "off",
+	AudioTiming:      "always",
+	AudioTransport:   "auto",
+	AudioProfile:     "balanced",
+	AudioTransportV2: true,
+	MicMode:          "off",
+	Autostart:        false,
+	StartMinimized:   false,
 }
 
 type Store struct {
 	mu   sync.Mutex
 	path string
 	data Settings
+	// lastSaved is the encoding last written successfully; used to skip
+	// rewriting the file when an update changed nothing.
+	lastSaved []byte
 }
 
 func copyLastPeerAddr(src map[string]string) map[string]string {
@@ -117,7 +125,7 @@ func (s *Store) load() {
 	if loaded.AudioTiming != "" {
 		s.data.AudioTiming = loaded.AudioTiming
 	}
-	if loaded.AudioTransport != "" {
+	if loaded.AudioTransport != "" && (loaded.AudioTransportV2 || loaded.AudioTransport != "pcm") {
 		s.data.AudioTransport = loaded.AudioTransport
 	}
 	if loaded.AudioProfile != "" {
@@ -167,9 +175,40 @@ func (s *Store) save() {
 		log.Printf("settings: marshal error: %v", err)
 		return
 	}
-	if err := os.WriteFile(s.path, raw, 0o600); err != nil {
-		log.Printf("settings: write error: %v", err)
+	if bytes.Equal(raw, s.lastSaved) {
+		return
 	}
+	if err := writeFileAtomic(s.path, raw); err != nil {
+		log.Printf("settings: write error: %v", err)
+		return
+	}
+	s.lastSaved = raw
+}
+
+// writeFileAtomic writes data to a temp file next to path and renames it
+// into place, so a crash or power loss never leaves a truncated file.
+func writeFileAtomic(path string, data []byte) error {
+	tmpPath := path + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Get() Settings {
