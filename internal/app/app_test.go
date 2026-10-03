@@ -404,7 +404,6 @@ func TestUpdateSessionLatencyResetsJitterOnReconnect(t *testing.T) {
 	}
 }
 
-
 func TestConnectionInterfaceKind(t *testing.T) {
 	tests := []struct {
 		name string
@@ -423,7 +422,6 @@ func TestConnectionInterfaceKind(t *testing.T) {
 		}
 	}
 }
-
 
 func TestPeerConnectionCandidatesPreservesSelectedRoute(t *testing.T) {
 	peers := []discovery.DiscoveredPeer{
@@ -453,7 +451,7 @@ func TestReconnectCandidatesPrioritizesDirectUSB4(t *testing.T) {
 		Addresses: []string{"192.168.0.11:24831", "169.254.4.2:24831"},
 		AddressKinds: map[string]string{
 			"192.168.0.11:24831": "wifi",
-			"169.254.4.2:24831": "usb4",
+			"169.254.4.2:24831":  "usb4",
 		},
 	}}
 	got, _ := reconnectCandidatesFor(cfg, peers)

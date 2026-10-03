@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"multisnekkvm/internal/logutil"
+	"multisnekkvm/internal/transport"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (a *App) BeforeClose(_ context.Context) bool {
+func (a *App) beforeClose(_ context.Context) bool {
 	a.mu.RLock()
 	quit := a.quitRequested
 	a.mu.RUnlock()
@@ -27,7 +28,7 @@ func (a *App) BeforeClose(_ context.Context) bool {
 	return true
 }
 
-func (a *App) Shutdown(_ context.Context) {
+func (a *App) shutdown(_ context.Context) {
 	logutil.LogKV("app.shutdown.begin",
 		"connected", a.transport != nil && a.transport.GetSession() != nil,
 		"playing_audio", a.audioPlaying(),
@@ -71,10 +72,10 @@ func (a *App) emitUpdates() {
 			if a.syncPairingCode() {
 				wailsRuntime.EventsEmit(a.ctx, "device-updated", a.deviceSnapshot())
 			}
-			sess := a.GetSession()
-			wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
-			wailsRuntime.EventsEmit(a.ctx, "session-updated", sess)
-			wailsRuntime.EventsEmit(a.ctx, "tailscale-updated", a.GetTailscaleStatus())
+			// Only emit when the payload changed since the last emission.
+			sess := a.emitSessionUpdated()
+			a.emitPeersUpdated()
+			a.emitIfChanged("tailscale-updated", a.GetTailscaleStatus())
 			if a.tray != nil {
 				a.tray.UpdateStatus(sess.Connected, sess.PeerName)
 			}
@@ -82,8 +83,43 @@ func (a *App) emitUpdates() {
 	}
 }
 
+// queueClipboardWrite hands an inbound clipboard update to the writer
+// goroutine. Only the newest pending text matters, so an unconsumed older
+// value is replaced. Called only from the transport read loop.
+func (a *App) queueClipboardWrite(text string) {
+	select {
+	case a.clipboardInCh <- text:
+		return
+	default:
+	}
+	select {
+	case <-a.clipboardInCh:
+	default:
+	}
+	select {
+	case a.clipboardInCh <- text:
+	default:
+	}
+}
+
+// clipboardWriter applies inbound clipboard text. OpenClipboard can block
+// while another process holds the clipboard, so this must stay off the
+// transport read loop.
+func (a *App) clipboardWriter(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case text := <-a.clipboardInCh:
+			SetClipboardText(text)
+		}
+	}
+}
+
 func (a *App) clipboardSync() {
 	lastOversizedClipboard := false
+	var lastSeq uint32
+	var lastSession *transport.Session
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -93,9 +129,25 @@ func (a *App) clipboardSync() {
 		case <-ticker.C:
 			s := a.transport.GetSession()
 			if s == nil {
+				lastSession = nil
+				continue
+			}
+			if s != lastSession {
+				// A new session starts with a reset clipboard state and
+				// must offer the current clipboard again.
+				lastSession = s
+				lastSeq = 0
+			}
+			// Skip opening the clipboard when its contents are unchanged.
+			seq := GetClipboardSequenceNumber()
+			if seq != 0 && seq == lastSeq {
 				continue
 			}
 			text, tooLarge := GetClipboardTextForSync()
+			// An empty read may mean OpenClipboard failed; retry next tick.
+			if text != "" || tooLarge {
+				lastSeq = seq
+			}
 			if tooLarge {
 				if !lastOversizedClipboard {
 					log.Printf("clipboard sync: skipping oversized local clipboard text (max %d UTF-8 bytes / %d UTF-16 bytes)", maxClipboardTextBytes, maxClipboardUTF16Bytes)
@@ -196,7 +248,7 @@ func (a *App) controlledModeWatchdog(ctx context.Context) {
 
 		log.Printf("controlled-mode watchdog: no remote input for %.0fs, auto-releasing controlled state", idle.Seconds())
 		a.pausePeerControlUntilWake()
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+		a.emitSessionUpdated()
 	}
 }
 
@@ -207,6 +259,9 @@ func (a *App) GetLoadMetrics() map[string]int64 {
 		"sendQueueHigh":     int64(len(a.muxHigh)),
 		"sendQueueMouse":    int64(len(a.muxMouse)),
 		"sendQueueFile":     int64(len(a.muxFile)),
+		"sendQueueAudio":    int64(a.muxAudio.len()),
+		"muxAudioSent":      int64(atomic.LoadUint64(&a.muxAudioSentN)),
+		"muxAudioDropped":   int64(atomic.LoadUint64(&a.muxAudioDroppedN)),
 		"muxHighSent":       int64(atomic.LoadUint64(&a.muxHighSentN)),
 		"muxMouseSent":      int64(atomic.LoadUint64(&a.muxMouseSentN)),
 		"muxMouseCoalesced": int64(atomic.LoadUint64(&a.muxMouseCoalescedN)),

@@ -3,7 +3,9 @@ package app
 import "log"
 
 const (
-	fileInboundCap  = 64
+	// Inbound file frames block the read loop when this fills (TCP
+	// backpressure), so give the disk writer some slack.
+	fileInboundCap  = 128
 	audioInboundCap = 256
 )
 

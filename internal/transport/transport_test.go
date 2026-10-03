@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -163,5 +165,22 @@ func TestAuthorizeOutboundPeerRequiresPairingCodeOnlyForFirstTrust(t *testing.T)
 
 	if err := transport.authorizeOutboundPeer(peerHello, "fingerprint-2", "100.64.0.10:24831", ""); err != nil {
 		t.Fatalf("expected subsequent outbound connect to use stored trust: %v", err)
+	}
+}
+
+func TestDialErrorIsErrDialAndKeepsMessage(t *testing.T) {
+	inner := errors.New("connection refused")
+	err := fmt.Errorf("wrapped: %w", &dialError{err: inner})
+	if !errors.Is(err, ErrDial) {
+		t.Fatal("dial error must match ErrDial")
+	}
+	if !errors.Is(err, inner) {
+		t.Fatal("dial error must unwrap to the underlying cause")
+	}
+	if got := (&dialError{err: inner}).Error(); got != "connect: connection refused" {
+		t.Fatalf("message = %q", got)
+	}
+	if errors.Is(errors.New("trusted fingerprint mismatch"), ErrDial) {
+		t.Fatal("non-dial errors must not match ErrDial")
 	}
 }

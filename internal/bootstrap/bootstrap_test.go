@@ -1,7 +1,10 @@
 package bootstrap
 
 import (
+	"reflect"
 	"testing"
+
+	appcore "multisnekkvm/internal/app"
 )
 
 func TestRunMode(t *testing.T) {
@@ -30,5 +33,18 @@ func TestSupervisedEnvReplacesExistingFlag(t *testing.T) {
 	}
 	if env[1] != "PATH=test" {
 		t.Fatalf("expected other env vars to stay in place, got %q", env[1])
+	}
+}
+
+func TestLifecycleMethodsAreNotBoundToJS(t *testing.T) {
+	appType := reflect.TypeOf(&appcore.App{})
+	for _, name := range []string{"Startup", "Shutdown", "BeforeClose"} {
+		if _, ok := appType.MethodByName(name); ok {
+			t.Errorf("*app.App exports %s; Wails would expose it to JavaScript", name)
+		}
+	}
+	opts := buildOptions(nil, &appcore.App{})
+	if opts.OnStartup == nil || opts.OnShutdown == nil || opts.OnBeforeClose == nil {
+		t.Fatal("lifecycle hooks must still be wired")
 	}
 }

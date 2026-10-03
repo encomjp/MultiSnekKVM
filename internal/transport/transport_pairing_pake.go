@@ -25,7 +25,7 @@ func pairingOptions(clientFingerprint, serverFingerprint string) *spake2.Options
 }
 
 func readPairingFrame(conn *tls.Conn, expected byte) ([]byte, error) {
-	frame, err := protocol.ReadFrame(conn)
+	frame, err := protocol.ReadFrameLimit(conn, protocol.MaxHandshakePayloadBytes)
 	if err != nil {
 		return nil, err
 	}

@@ -119,6 +119,7 @@ func runApp(assets fs.FS, trayIcon, appIcon []byte) error {
 }
 
 func buildOptions(assets fs.FS, app *appcore.App) *options.App {
+	startup, shutdown, beforeClose := appcore.LifecycleHooks(app)
 	return &options.App{
 		Title:            "MultiSnekKVM",
 		Width:            1360,
@@ -129,9 +130,9 @@ func buildOptions(assets fs.FS, app *appcore.App) *options.App {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		OnStartup:     app.Startup,
-		OnShutdown:    app.Shutdown,
-		OnBeforeClose: app.BeforeClose,
+		OnStartup:     startup,
+		OnShutdown:    shutdown,
+		OnBeforeClose: beforeClose,
 		Bind: []interface{}{
 			app,
 		},

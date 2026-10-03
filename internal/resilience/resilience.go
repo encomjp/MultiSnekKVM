@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	minRestartDelay = 500 * time.Millisecond
-	maxRestartDelay = 30 * time.Second
-	healthCheckFreq = 5 * time.Second
+	minRestartDelay   = 500 * time.Millisecond
+	maxRestartDelay   = 30 * time.Second
+	healthCheckFreq   = 5 * time.Second
 	healthGracePeriod = 15 * time.Second
 )
 

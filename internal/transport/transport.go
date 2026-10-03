@@ -2,6 +2,7 @@ package transport
 
 import (
 	"crypto/tls"
+	"errors"
 	"log"
 	"net"
 	"runtime/debug"
@@ -27,7 +28,20 @@ const (
 	rateLimitCleanFreq = 60 * time.Second
 )
 
-var pairingCodeGenerator = generateRandomPairingCode
+var pairingCodeGenerator = GeneratePairingCode
+
+// ErrDial marks failures to reach a peer at all (TCP connect or TLS
+// handshake). Callers may retry another address on ErrDial, but must not
+// on authentication, PIN or trust failures. Use errors.Is(err, ErrDial).
+var ErrDial = errors.New("dial failed")
+
+// dialError wraps a connectivity failure. Its message keeps the historic
+// "connect: " prefix.
+type dialError struct{ err error }
+
+func (e *dialError) Error() string        { return "connect: " + e.err.Error() }
+func (e *dialError) Unwrap() error        { return e.err }
+func (e *dialError) Is(target error) bool { return target == ErrDial }
 
 type Session struct {
 	mu              sync.RWMutex
@@ -69,6 +83,10 @@ type Transport struct {
 	pairingLockedUntil time.Time
 
 	listener net.Listener
+
+	// Local TLS certificate, loaded once from disk and reused.
+	certMu sync.Mutex
+	cert   *tls.Certificate
 
 	mu        sync.RWMutex
 	session   *Session

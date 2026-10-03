@@ -116,7 +116,7 @@ func (t *Transport) beginHelloExchange(conn *tls.Conn) (*x509.Certificate, strin
 }
 
 func (t *Transport) readPeerHello(conn *tls.Conn, peerCert *x509.Certificate) (protocol.HelloMsg, error) {
-	frame, err := protocol.ReadFrame(conn)
+	frame, err := protocol.ReadFrameLimit(conn, protocol.MaxHandshakePayloadBytes)
 	if err != nil {
 		return protocol.HelloMsg{}, fmt.Errorf("read hello: %w", err)
 	}
@@ -174,7 +174,8 @@ func validatePeerHello(hello protocol.HelloMsg, peerCert *x509.Certificate) erro
 	return nil
 }
 
-func shortPeerID(id string) string {
+// ShortPeerID abbreviates a device ID or fingerprint for logs.
+func ShortPeerID(id string) string {
 	if len(id) <= 12 {
 		return id
 	}
