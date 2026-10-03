@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"multisnekkvm/internal/logutil"
+	"multisnekkvm/internal/link"
 )
 
 func (a *App) syncPairingCode() bool {
@@ -54,12 +55,13 @@ func (a *App) GetPeers() []PeerInfo {
 			}
 			seen[dp.Address] = true
 			routes := append([]string(nil), dp.Routes...)
-			sort.Strings(routes)
+			sort.Slice(routes, func(i, j int) bool { return link.Rank(routes[i]) < link.Rank(routes[j]) })
 			peers = append(peers, PeerInfo{
 				ID:             dp.DeviceID,
 				Name:           dp.Name,
 				Address:        dp.Address,
 				Addresses:      append([]string(nil), dp.Addresses...),
+				AddressKinds:   dp.AddressKinds,
 				Fingerprint:    fingerprint,
 				Source:         peerSourceLabel(routes),
 				Routes:         routes,
@@ -224,15 +226,12 @@ func peerSourceLabel(routes []string) string {
 }
 
 func preferredRoute(routes []string) string {
-	for _, route := range routes {
-		if route == "lan" {
-			return route
-		}
+	if len(routes) == 0 { return "" }
+	preferred := routes[0]
+	for _, route := range routes[1:] {
+		if link.Rank(route) < link.Rank(preferred) { preferred = route }
 	}
-	if len(routes) == 0 {
-		return ""
-	}
-	return routes[0]
+	return preferred
 }
 
 func normalizePeerAddress(raw string, defaultPort int) (string, error) {
@@ -274,57 +273,20 @@ type ConnectionInterface struct {
 }
 
 func connectionInterfaceKind(name string) string {
-	lower := strings.ToLower(name)
-	switch {
-	case strings.Contains(lower, "usb4"), strings.Contains(lower, "thunderbolt"):
-		return "usb4"
-	case strings.Contains(lower, "bluetooth"), strings.Contains(lower, "personal area"):
-		return "bluetooth"
-	default:
-		return "network"
-	}
+	return link.Kind(name)
 }
 
-// GetConnectionInterfaces returns addresses the user may share with another
-// computer for a manual connection, including direct USB4 and Bluetooth PAN
-// addresses if Windows has established those links. Link-local IPv6 addresses
-// are excluded because they require a local interface zone to be connectable.
+// GetConnectionInterfaces lists usable Windows IP adapters. A standard
+// USB-C host port is not exposed as a direct link unless Windows has
+// established USB4NET or the bridge driver offers a network adapter.
 func (a *App) GetConnectionInterfaces() []ConnectionInterface {
-	result := make([]ConnectionInterface, 0)
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return result
+	adapters := link.Adapters()
+	result := make([]ConnectionInterface, 0, len(adapters))
+	for _, adapter := range adapters {
+		result = append(result, ConnectionInterface{
+			Name: adapter.Name, Kind: adapter.Kind,
+			Addresses: adapter.Addresses,
+		})
 	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		entry := ConnectionInterface{Name: iface.Name, Kind: connectionInterfaceKind(iface.Name), Addresses: make([]string, 0)}
-		for _, address := range addrs {
-			ipNet, ok := address.(*net.IPNet)
-			if !ok || ipNet.IP == nil || ipNet.IP.IsLoopback() || ipNet.IP.IsUnspecified() {
-				continue
-			}
-			if ipNet.IP.To4() == nil && ipNet.IP.IsLinkLocalUnicast() {
-				continue
-			}
-			entry.Addresses = append(entry.Addresses, ipNet.IP.String())
-		}
-		if len(entry.Addresses) > 0 {
-			sort.Strings(entry.Addresses)
-			result = append(result, entry)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Kind != result[j].Kind {
-			order := map[string]int{"usb4": 0, "bluetooth": 1, "network": 2}
-			return order[result[i].Kind] < order[result[j].Kind]
-		}
-		return result[i].Name < result[j].Name
-	})
 	return result
 }
