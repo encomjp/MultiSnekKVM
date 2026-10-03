@@ -88,7 +88,7 @@ func (t *Transport) authorizeInboundPeer(peerHello protocol.HelloMsg, peerFinger
 
 func (t *Transport) authorizeOutboundPeer(peerHello protocol.HelloMsg, peerFingerprint, endpoint string, pairingCode string) error {
 	if t.trust == nil {
-		return nil
+		return fmt.Errorf("trust store unavailable")
 	}
 	record, ok := t.trust.GetByDeviceID(peerHello.DeviceID)
 	if ok {
