@@ -488,3 +488,23 @@ func TestUpdateSessionLatencyResetsJitterOnReconnect(t *testing.T) {
 		t.Fatalf("jitterMs should be -1 after reconnect+single sample, got %d", a.jitterMs)
 	}
 }
+
+
+func TestConnectionInterfaceKind(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"USB4 P2P Network Adapter", "usb4"},
+		{"Thunderbolt Networking", "usb4"},
+		{"Bluetooth Network Connection", "bluetooth"},
+		{"Personal Area Network", "bluetooth"},
+		{"Ethernet 4", "network"},
+		{"Wi-Fi", "network"},
+	}
+	for _, tc := range tests {
+		if got := connectionInterfaceKind(tc.name); got != tc.want {
+			t.Errorf("connectionInterfaceKind(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
