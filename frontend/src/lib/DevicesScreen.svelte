@@ -96,7 +96,7 @@
         <div class="interface-list">
           {#each networkInterfaces as adapter (adapter.name)}
             <div class="interface-row">
-              <span class="interface-name">{adapter.name} <span class="guide-hint">{interfaceLabel(adapter.kind)}</span></span>
+              <span class="interface-name">{adapter.name} <span class="guide-hint">{interfaceLabel(adapter.kind)}{adapter.description && adapter.description !== adapter.name ? ` · ${adapter.description}` : ""}</span></span>
               <span class="interface-addresses mono selectable">{adapter.addresses.join(' · ')}</span>
             </div>
           {/each}
