@@ -60,7 +60,14 @@
         USB4 / Thunderbolt: plug both PCs together. Windows creates a network adapter with a 169.254.x.x address;
         MultiSnek finds it and prefers it.
       </li>
-      <li>Bluetooth: pair the PCs and join a Bluetooth PAN. Fine for input; slow for audio and files.</li>
+      <li>
+        Bluetooth (direct): pair the PCs in Windows Bluetooth settings and turn on Bluetooth above. MultiSnek finds
+        paired PCs on its own, no network needed. Fine for input and compressed audio; slow for files.
+      </li>
+      <li>
+        Bluetooth PAN: Bluetooth tethering that shows up as a network adapter in the list above. Works too, but the
+        direct link is simpler.
+      </li>
       <li>USB bridge cable: works only if its driver exposes a network adapter.</li>
       <li>A plain USB-C cable between two PCs is not a network.</li>
     </ul>
@@ -72,7 +79,6 @@
 
 <style>
   .adapters {
-    flex: 1 1 280px;
     min-width: 0;
     display: flex;
     flex-direction: column;

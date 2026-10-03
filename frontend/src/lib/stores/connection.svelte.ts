@@ -114,9 +114,11 @@ export class ConnectionStore {
     this.disconnecting = false;
     if (next.connected) {
       const peer = this.peers.find((item) => item.id === next.peerID);
-      const route = next.route ? routeLabel(next.route) : '';
+      const route = next.route ? routeLabel(next.route, next.remoteAddress) : '';
       const others = peer
-        ? orderedRoutes(peer.routes.filter((r) => r !== next.route && r !== 'manual')).map(routeLabel)
+        ? orderedRoutes(peer.routes.filter((r) => r !== next.route && r !== 'manual')).map((r) =>
+            routeLabel(r, peer.addresses.find((a) => peer.addressKinds[a] === r)),
+          )
         : [];
       const title = route ? `Connected over ${route}` : `Connected to ${next.peerName}`;
       const detail = [
@@ -215,7 +217,7 @@ export class ConnectionStore {
   /** Add a manual peer. Resolves to an error message, or '' on success. */
   async addPeer(address: string): Promise<string> {
     const trimmed = address.trim();
-    if (!trimmed) return 'Enter an IP address or hostname.';
+    if (!trimmed) return 'Enter an IP address, hostname or bt:// address.';
     try {
       await this.#api.AddPeer(trimmed);
       await this.refreshPeers();

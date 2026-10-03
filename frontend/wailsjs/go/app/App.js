@@ -66,6 +66,10 @@ export function GetDevice() {
   return window['go']['app']['App']['GetDevice']();
 }
 
+export function GetBluetoothStatus() {
+  return window['go']['app']['App']['GetBluetoothStatus']();
+}
+
 export function GetEdgeSide() {
   return window['go']['app']['App']['GetEdgeSide']();
 }
@@ -158,6 +162,10 @@ export function RemovePeer(arg1) {
   return window['go']['app']['App']['RemovePeer'](arg1);
 }
 
+export function RefreshBluetooth() {
+  return window['go']['app']['App']['RefreshBluetooth']();
+}
+
 export function SaveReceivedFiles(arg1) {
   return window['go']['app']['App']['SaveReceivedFiles'](arg1);
 }
@@ -180,6 +188,10 @@ export function SetAudioTiming(arg1) {
 
 export function SetAudioTransport(arg1) {
   return window['go']['app']['App']['SetAudioTransport'](arg1);
+}
+
+export function SetBluetoothEnabled(arg1) {
+  return window['go']['app']['App']['SetBluetoothEnabled'](arg1);
 }
 
 export function SetAutoReconnect(arg1) {

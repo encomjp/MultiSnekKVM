@@ -27,7 +27,17 @@ export const LAST_PEER_KEYS = [
   'address',
 ] as const;
 
-export function routeLabel(route: string | undefined | null): string {
+/** True for direct Bluetooth endpoints such as "bt://AA:BB:CC:DD:EE:FF" (no port). */
+export function isBluetoothAddress(address: string | undefined | null): boolean {
+  return !!address && /^bt:[/][/]/i.test(address);
+}
+
+/**
+ * Label for a route kind. Pass the address when known: the "bluetooth" kind on
+ * an IP address is a Bluetooth PAN (tethering that shows up as a network
+ * adapter), while on a bt:// address it is the direct Bluetooth link.
+ */
+export function routeLabel(route: string | undefined | null, address?: string | null): string {
   switch (route) {
     case 'usb4':
       return 'USB4 / Thunderbolt';
@@ -38,7 +48,7 @@ export function routeLabel(route: string | undefined | null): string {
     case 'wifi':
       return 'Wi-Fi';
     case 'bluetooth':
-      return 'Bluetooth PAN';
+      return address && !isBluetoothAddress(address) ? 'Bluetooth PAN' : 'Bluetooth';
     case 'network':
       return 'Network';
     case 'lan':
@@ -58,6 +68,8 @@ export function routeLabel(route: string | undefined | null): string {
 
 export function interfaceLabel(kind: ConnectionInterface['kind']): string {
   if (kind === 'network') return 'Network adapter';
+  // Adapters are always IP: Bluetooth here means PAN, not the direct link.
+  if (kind === 'bluetooth') return 'Bluetooth PAN';
   return routeLabel(kind);
 }
 
@@ -69,8 +81,9 @@ export function orderedRoutes(routes: readonly string[]): string[] {
   });
 }
 
-/** Strip the port (and IPv6 brackets) from host:port. */
+/** Strip the port (and IPv6 brackets) from host:port. bt:// addresses have no port and are returned as-is. */
 export function hostOf(address: string): string {
+  if (isBluetoothAddress(address)) return address;
   if (address.startsWith('[')) {
     const end = address.indexOf(']');
     return end > 0 ? address.slice(1, end) : address;
@@ -93,6 +106,7 @@ function ipv4Parts(host: string): number[] | null {
  * guess Wi-Fi vs. Ethernet vs. Bluetooth PAN from the IP.
  */
 export function endpointLabel(address: string): string {
+  if (isBluetoothAddress(address)) return 'Bluetooth';
   const host = hostOf(address);
   const parts = ipv4Parts(host);
   if (parts) {
@@ -106,7 +120,7 @@ export function endpointLabel(address: string): string {
 /** Human label for one of a peer's addresses. */
 export function addressLabel(peer: Pick<Peer, 'addressKinds'>, address: string): string {
   const kind = peer.addressKinds[address];
-  return kind ? routeLabel(kind) : endpointLabel(address);
+  return kind ? routeLabel(kind, address) : endpointLabel(address);
 }
 
 export interface RouteOption {
