@@ -70,6 +70,10 @@ func (a *App) notePeerControlInput(forceWake bool) (activated bool, allowed bool
 	}
 	allowed = true
 	a.mu.Unlock()
+	if !forceWake {
+		// The caller is about to inject input on this (controlled) machine.
+		atomic.StoreUint32(&a.injectedInputN, 1)
+	}
 	atomic.StoreInt64(&a.lastRemoteInputNs, time.Now().UnixNano())
 	return activated, allowed
 }
@@ -116,15 +120,21 @@ func (a *App) releaseInjectedRemoteKeysLocked() {
 			InjectMouseClick(byte(i), false)
 		}
 	}
-	// Unconditionally release all modifier keys to prevent stuck modifiers
-	// that can occur when the remote side releases a key after the session
-	// is already torn down (or the key-up is lost in transit).
-	ReleaseAllModifiers()
+	// Release all modifier keys to prevent stuck modifiers that can occur
+	// when the remote side releases a key after the session is already torn
+	// down (or the key-up is lost in transit). Only done where remote input
+	// was actually injected (the controlled side): on the controller these
+	// synthetic key-ups would fight the user's physical keyboard.
+	if atomic.SwapUint32(&a.injectedInputN, 0) != 0 {
+		ReleaseAllModifiers()
+	}
 	// Clear the fast-path flag so handleRemoteMouseMove skips touchRemoteKeyWatchdog.
 	atomic.StoreUint64(&a.remoteInputActiveN, 0)
 }
 
 func (a *App) touchRemoteKeyWatchdog() {
+	// Called right after injecting remote input.
+	atomic.StoreUint32(&a.injectedInputN, 1)
 	// Stamp every inbound control input for the controlled-mode inactivity watchdog.
 	atomic.StoreInt64(&a.lastRemoteInputNs, time.Now().UnixNano())
 	a.mu.Lock()

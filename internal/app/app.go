@@ -243,6 +243,11 @@ type App struct {
 	// pure mouse movement and mouse-button drags.
 	remoteInputActiveN uint64
 
+	// Atomic flag: non-zero once remote input has been injected on this
+	// machine since the last release. Gates ReleaseAllModifiers so the
+	// controller never sends synthetic modifier key-ups.
+	injectedInputN uint32
+
 	// UnixNano of the last inbound control-input frame (mouse move, click, scroll,
 	// key, or unicode text) received while host is in controlled mode.
 	// Set when active peer control starts and on every control frame.
