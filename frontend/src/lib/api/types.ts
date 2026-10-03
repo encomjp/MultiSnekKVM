@@ -73,6 +73,25 @@ export interface TailscaleStatus {
   lastError: string;
 }
 
+export interface BluetoothDevice {
+  /** "bt://AA:BB:CC:DD:EE:FF" */
+  address: string;
+  deviceId: string;
+  name: string;
+}
+
+export interface BluetoothStatus {
+  available: boolean;
+  enabled: boolean;
+  listening: boolean;
+  scanning: boolean;
+  error?: string;
+  /** Paired PCs found running MultiSnek. */
+  devices: BluetoothDevice[];
+  /** Unix seconds; 0 = never. */
+  lastScan: number;
+}
+
 export interface ConnectionInterface {
   name: string;
   description?: string;
@@ -169,6 +188,7 @@ export interface EventMap {
   'peers-updated': Peer[];
   'session-updated': SessionStatus;
   'tailscale-updated': TailscaleStatus;
+  'bluetooth-updated': BluetoothStatus;
   'health-updated': HealthStatus;
   'health-alert': HealthAlert;
   'file-received': FileReceivedEvent;
@@ -193,6 +213,12 @@ export interface Api {
   GetTailscaleStatus(): Promise<TailscaleStatus>;
   GetConnectionInterfaces(): Promise<ConnectionInterface[]>;
   GetLastPeer(): Promise<LastPeer | null>;
+
+  // Bluetooth (direct link between paired PCs)
+  GetBluetoothStatus(): Promise<BluetoothStatus>;
+  SetBluetoothEnabled(enabled: boolean): Promise<void>;
+  /** Triggers an immediate scan; progress arrives via `bluetooth-updated`. */
+  RefreshBluetooth(): Promise<void>;
 
   // Connection & trust
   AddPeer(address: string): Promise<void>;

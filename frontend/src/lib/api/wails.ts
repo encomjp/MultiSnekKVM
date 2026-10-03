@@ -10,6 +10,7 @@ import {
   normalizeAudioProfile,
   normalizeAudioTiming,
   normalizeAudioTransport,
+  normalizeBluetooth,
   normalizeDevice,
   normalizeEdgeSide,
   normalizeFileReceived,
@@ -35,6 +36,7 @@ const eventNormalizers: { [E in EventName]: (raw: unknown) => EventMap[E] } = {
   'peers-updated': normalizePeers,
   'session-updated': normalizeSession,
   'tailscale-updated': normalizeTailscale,
+  'bluetooth-updated': normalizeBluetooth,
   'health-updated': normalizeHealth,
   'health-alert': normalizeHealthAlert,
   'file-received': normalizeFileReceived,
@@ -64,6 +66,10 @@ export function createWailsApi(): Api {
     GetTailscaleStatus: async () => normalizeTailscale(await App.GetTailscaleStatus()),
     GetConnectionInterfaces: async () => normalizeInterfaces(await App.GetConnectionInterfaces()),
     GetLastPeer: async () => normalizeLastPeer(await App.GetLastPeer()),
+
+    GetBluetoothStatus: async () => normalizeBluetooth(await App.GetBluetoothStatus()),
+    SetBluetoothEnabled: (enabled) => App.SetBluetoothEnabled(enabled),
+    RefreshBluetooth: () => App.RefreshBluetooth(),
 
     AddPeer: (address) => App.AddPeer(address),
     RemovePeer: (address) => App.RemovePeer(address),
