@@ -80,7 +80,10 @@ func WriteFrame(w io.Writer, f Frame) error {
 	buf[0] = f.Type
 	binary.BigEndian.PutUint32(buf[1:], uint32(len(f.Payload)))
 	copy(buf[5:], f.Payload)
-	_, err := w.Write(buf)
+	n, err := w.Write(buf)
+	if err == nil && n != len(buf) {
+		err = io.ErrShortWrite
+	}
 	*bp = buf[:0]
 	frameWritePool.Put(bp)
 	return err
@@ -102,7 +105,10 @@ func WriteFrameMouseMove(w io.Writer, dx, dy int32) error {
 	binary.BigEndian.PutUint32(buf[1:], 8) // payload length
 	binary.BigEndian.PutUint32(buf[5:], uint32(dx))
 	binary.BigEndian.PutUint32(buf[9:], uint32(dy))
-	_, err := w.Write(buf)
+	n, err := w.Write(buf)
+	if err == nil && n != len(buf) {
+		err = io.ErrShortWrite
+	}
 	*bp = buf[:0]
 	frameWritePool.Put(bp)
 	return err
