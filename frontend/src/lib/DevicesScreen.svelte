@@ -20,8 +20,8 @@
 
   let selectedPeerAddresses: Record<string, string> = {};
 
-  function addressForPeer(peer: Peer): string {
-    const selected = selectedPeerAddresses[peer.id];
+  function addressForPeer(peer: Peer, selections: Record<string, string>): string {
+    const selected = selections[peer.id];
     return selected && (peer.addresses || []).includes(selected) ? selected : peer.address;
   }
 
@@ -120,14 +120,14 @@
                 <span class="badge session-badge">Active</span>
               {/if}
             </div>
-            <p class="device-address mono selectable">{addressForPeer(peer) || '—'}</p>
+            <p class="device-address mono selectable">{addressForPeer(peer, selectedPeerAddresses) || '—'}</p>
             {#if (peer.addresses || []).length > 1}
               <label class="route-picker-label" for="route-{peer.id}">Connection address</label>
               <select
                 class="input route-picker mono"
                 id="route-{peer.id}"
                 aria-label="Connection address for {peer.name}"
-                value={addressForPeer(peer)}
+                value={addressForPeer(peer, selectedPeerAddresses)}
                 on:change={(event) => selectPeerAddress(peer.id, event)}
                 disabled={sessionConnected || !!connectingAddress}
               >
@@ -153,11 +153,11 @@
             {:else}
               <button
                 class="btn {peer.trusted ? 'btn-primary' : 'btn-secondary'}"
-                on:click={() => onConnect(addressForPeer(peer), !peer.trusted)}
-                disabled={!addressForPeer(peer) || !!connectingAddress || sessionConnected}
+                on:click={() => onConnect(addressForPeer(peer, selectedPeerAddresses), !peer.trusted)}
+                disabled={!addressForPeer(peer, selectedPeerAddresses) || !!connectingAddress || sessionConnected}
               >
-                {#if connectingAddress === addressForPeer(peer)}<span class="btn-spinner"></span>{/if}
-                {connectingAddress === addressForPeer(peer) ? 'Connecting…' : peer.trusted ? 'Connect' : 'Pair & Connect'}
+                {#if connectingAddress === addressForPeer(peer, selectedPeerAddresses)}<span class="btn-spinner"></span>{/if}
+                {connectingAddress === addressForPeer(peer, selectedPeerAddresses) ? 'Connecting…' : peer.trusted ? 'Connect' : 'Pair & Connect'}
               </button>
             {/if}
             {#if peer.trusted}
