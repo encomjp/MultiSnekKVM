@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import App from '../App.svelte';
 import OverviewScreen from '../lib/OverviewScreen.svelte';
+import DevicesScreen from '../lib/DevicesScreen.svelte';
 
 beforeEach(() => {
   localStorage.clear();
@@ -113,6 +114,33 @@ describe('App shell', () => {
 
     expect(screen.getByText('Disconnect from the current host to change the edge or monitor layout.')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Left' })).toBeDisabled();
+  });
+});
+
+describe('Device connection routes', () => {
+  it('connects using the address selected for a multi-homed peer', async () => {
+    const connect = vi.fn();
+    const peer = {
+      id: 'studio', name: 'Studio PC',
+      address: '192.168.0.42:24831',
+      addresses: ['192.168.0.42:24831', '169.254.22.15:24831'],
+      fingerprint: 'test', port: 24831, source: 'lan', status: 'online',
+      trusted: true, routes: ['lan'], preferredRoute: 'lan',
+    };
+    render(DevicesScreen, {
+      props: {
+        peers: [peer], filteredPeers: [peer], onlinePeerCount: 1,
+        onConnect: connect, onAdd: vi.fn(), onDisconnect: vi.fn(),
+        onRemove: vi.fn(), onForgetTrust: vi.fn(),
+        networkInterfaces: [{ name: 'USB4 network', kind: 'usb4', addresses: ['169.254.22.16'] }],
+      },
+    });
+    const route = screen.getByRole('combobox', { name: 'Connection address for Studio PC' });
+    await fireEvent.change(route, { target: { value: '169.254.22.15:24831' } });
+    expect(screen.getByText('169.254.22.15:24831', { selector: '.device-address' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(connect).toHaveBeenCalledWith('169.254.22.15:24831', false);
+    expect(screen.getByText(/Connect over USB4/)).toBeInTheDocument();
   });
 });
 
