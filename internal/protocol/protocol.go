@@ -14,6 +14,10 @@ const MaxFramePayloadBytes = 1 << 20
 // Message types
 const (
 	MsgHello          byte = 0x01
+	MsgPairingStart    byte = 0x06
+	MsgPairingExchange byte = 0x07
+	MsgPairingClientConfirm byte = 0x08
+	MsgPairingServerConfirm byte = 0x09
 	MsgEdgeConfig     byte = 0x02
 	MsgHeartbeat      byte = 0x03
 	MsgMouseMove      byte = 0x10
