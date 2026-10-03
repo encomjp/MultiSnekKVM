@@ -5,6 +5,8 @@ import (
 	"log"
 	"time"
 
+	"multisnekkvm/internal/audio"
+
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -67,9 +69,7 @@ func (a *App) startAudioForMode(mode string) {
 		a.enqueueSend(Frame{Type: MsgAudioStart})
 		log.Println("audio: hearing remote")
 	case "local":
-		_ = a.audio.StartCapture(func(f Frame) {
-			a.handleCapturedAudioFrame(f)
-		})
+		a.startCapture(audio.StreamDesktop)
 		log.Println("audio: sending local")
 	}
 }
@@ -78,8 +78,8 @@ func (a *App) stopAllAudio() {
 	if a.audio == nil {
 		return
 	}
-	a.audio.StopCapture()
-	a.audio.StopPlayback()
+	a.audio.StopCapture(audio.StreamDesktop)
+	a.audio.StopPlayback(audio.StreamDesktop)
 	if s := a.transport.GetSession(); s != nil {
 		a.enqueueSend(Frame{Type: MsgAudioStop})
 	}
@@ -130,9 +130,7 @@ func (a *App) startMicForMode(mode string) {
 		a.enqueueSend(Frame{Type: MsgMicStart})
 		log.Println("mic: hearing remote mic")
 	case "send":
-		_ = a.audio.StartMicCapture(func(f Frame) {
-			a.handleCapturedMicFrame(f)
-		})
+		a.startCapture(audio.StreamMic)
 		log.Println("mic: sending local mic")
 	}
 }
@@ -141,8 +139,8 @@ func (a *App) stopAllMic() {
 	if a.audio == nil {
 		return
 	}
-	a.audio.StopMicCapture()
-	a.audio.StopMicPlayback()
+	a.audio.StopCapture(audio.StreamMic)
+	a.audio.StopPlayback(audio.StreamMic)
 	if s := a.transport.GetSession(); s != nil {
 		a.enqueueSend(Frame{Type: MsgMicStop})
 	}
@@ -198,11 +196,20 @@ func (a *App) GetMuteSource() bool {
 	return a.muteSource
 }
 
+// SetMuteSource mutes this PC's speakers while its desktop audio is sent to
+// the peer (restored when sending stops).
 func (a *App) SetMuteSource(enabled bool) {
 	a.mu.Lock()
+	changed := a.muteSource != enabled
 	a.muteSource = enabled
 	a.mu.Unlock()
+	if !changed {
+		return
+	}
 	a.settings.Update(func(s *Settings) { s.MuteSource = enabled })
+	if a.audio != nil {
+		a.audio.SetMuteSource(enabled)
+	}
 }
 
 func (a *App) GetAudioDevices() []AudioDevice {
@@ -211,12 +218,17 @@ func (a *App) GetAudioDevices() []AudioDevice {
 	return append(render, capture...)
 }
 
-func (a *App) setDeviceID(field *string, id, reason string, update func(*Settings, string)) {
+// setDeviceID stores a device choice and moves the affected running stream
+// to the new device (previously the stream was stopped and stayed off).
+func (a *App) setDeviceID(field *string, id string, update func(*Settings, string)) bool {
 	a.mu.Lock()
+	changed := *field != id
 	*field = id
 	a.mu.Unlock()
-	a.settings.Update(func(s *Settings) { update(s, id) })
-	a.scheduleControllerMediaReconcile(reason)
+	if changed {
+		a.settings.Update(func(s *Settings) { update(s, id) })
+	}
+	return changed && a.audio != nil
 }
 
 func (a *App) GetCaptureDeviceID() string {
@@ -226,9 +238,11 @@ func (a *App) GetCaptureDeviceID() string {
 }
 
 func (a *App) SetCaptureDeviceID(id string) {
-	a.setDeviceID(&a.captureDeviceID, id, "capture-device-change", func(s *Settings, value string) {
+	if a.setDeviceID(&a.captureDeviceID, id, func(s *Settings, value string) {
 		s.CaptureDeviceID = value
-	})
+	}) {
+		a.audio.SetCaptureDeviceID(id)
+	}
 }
 
 func (a *App) GetPlaybackDeviceID() string {
@@ -238,9 +252,11 @@ func (a *App) GetPlaybackDeviceID() string {
 }
 
 func (a *App) SetPlaybackDeviceID(id string) {
-	a.setDeviceID(&a.playbackDeviceID, id, "playback-device-change", func(s *Settings, value string) {
+	if a.setDeviceID(&a.playbackDeviceID, id, func(s *Settings, value string) {
 		s.PlaybackDeviceID = value
-	})
+	}) {
+		a.audio.SetPlaybackDeviceID(id)
+	}
 }
 
 func (a *App) GetMicDeviceID() string {
@@ -250,9 +266,11 @@ func (a *App) GetMicDeviceID() string {
 }
 
 func (a *App) SetMicDeviceID(id string) {
-	a.setDeviceID(&a.micDeviceID, id, "mic-device-change", func(s *Settings, value string) {
+	if a.setDeviceID(&a.micDeviceID, id, func(s *Settings, value string) {
 		s.MicDeviceID = value
-	})
+	}) {
+		a.audio.SetMicDeviceID(id)
+	}
 }
 
 func (a *App) GetMicPlaybackDeviceID() string {
@@ -262,9 +280,11 @@ func (a *App) GetMicPlaybackDeviceID() string {
 }
 
 func (a *App) SetMicPlaybackDeviceID(id string) {
-	a.setDeviceID(&a.micPlaybackDeviceID, id, "mic-playback-device-change", func(s *Settings, value string) {
+	if a.setDeviceID(&a.micPlaybackDeviceID, id, func(s *Settings, value string) {
 		s.MicPlaybackDeviceID = value
-	})
+	}) {
+		a.audio.SetMicPlaybackDeviceID(id)
+	}
 }
 
 func (a *App) GetStartMinimized() bool {

@@ -2,34 +2,84 @@ package app
 
 import (
 	"log"
+	"sync/atomic"
+	"time"
 
 	"multisnekkvm/internal/audio"
+	"multisnekkvm/internal/link"
 	"multisnekkvm/internal/logutil"
 	"multisnekkvm/internal/protocol"
 	"multisnekkvm/internal/settings"
 )
 
+// streamCapture feeds captured device audio for one stream through its
+// OutboundStream and onto the send mux. It runs on the capture thread.
+type streamCapture struct {
+	a         *App
+	kind      audio.StreamKind
+	out       *audio.OutboundStream
+	errLogged atomic.Int64
+}
+
+func (c *streamCapture) OnCaptureFormat(format []byte) {
+	mode := c.a.resolveAudioTransport(c.kind)
+	_, profile := c.a.currentAudioTransportSettings()
+	frames, effective, err := c.out.Configure(mode, profile, format)
+	if err != nil {
+		log.Printf("%s capture: %v", c.kind, err)
+		return
+	}
+	if effective != mode {
+		log.Printf("%s capture: %s unavailable, sending %s", c.kind, mode, effective)
+	}
+	logutil.LogKV("app.audio.stream", "stream", c.kind.String(), "transport", effective, "profile", profile)
+	c.a.sendAudioFrames(frames)
+}
+
+func (c *streamCapture) OnCaptureData(data []byte) {
+	frames, err := c.out.Process(data)
+	if err != nil {
+		if now := time.Now().Unix(); c.errLogged.Swap(now) != now {
+			log.Printf("%s capture: %v", c.kind, err)
+		}
+	}
+	c.a.sendAudioFrames(frames)
+}
+
+func (a *App) sendAudioFrames(frames []protocol.Frame) {
+	for _, f := range frames {
+		a.enqueueSend(f)
+	}
+}
+
 func (a *App) initAudioRuntime() {
-	a.audioOutbound = audio.NewOutboundRealtimeStream("audio", protocol.MsgAudioTransport, protocol.MsgAudioFormat, protocol.MsgAudioData)
-	a.micOutbound = audio.NewOutboundRealtimeStream("mic", protocol.MsgMicTransport, protocol.MsgMicFormat, protocol.MsgMicData)
-	a.audioInbound = audio.NewInboundRealtimeStream("audio")
-	a.micInbound = audio.NewInboundRealtimeStream("mic")
+	for _, kind := range []audio.StreamKind{audio.StreamDesktop, audio.StreamMic} {
+		out := audio.NewOutboundStream(kind)
+		a.audioOut[kind] = out
+		a.audioIn[kind] = audio.NewInboundStream(kind)
+		a.audioCapture[kind] = &streamCapture{a: a, kind: kind, out: out}
+	}
 	a.applyAudioQualityProfile()
+	if a.audio != nil {
+		a.audio.SetMuteSource(a.GetMuteSource())
+	}
 	a.logAudioPipelineConfig("audio-runtime-init")
 }
 
-func (a *App) resetAudioPipelines() {
-	if a.audioOutbound != nil {
-		a.audioOutbound.Reset()
-	}
-	if a.micOutbound != nil {
-		a.micOutbound.Reset()
-	}
-	if a.audioInbound != nil {
-		a.audioInbound.Reset()
-	}
-	if a.micInbound != nil {
-		a.micInbound.Reset()
+// resetAudioStreams forgets per-session stream state. It is only called when
+// a session starts or ends: resetting a receiver mid-session made it play
+// Opus packets as raw PCM (white noise) until the sender restarted.
+func (a *App) resetAudioStreams() {
+	for kind := range a.audioIn {
+		if a.audioIn[kind] != nil {
+			a.audioIn[kind].Reset()
+		}
+		if a.audioOut[kind] != nil {
+			a.audioOut[kind].Reset()
+		}
+		if a.audio != nil {
+			a.audio.Player(audio.StreamKind(kind)).Reset()
+		}
 	}
 }
 
@@ -39,12 +89,111 @@ func (a *App) currentAudioTransportSettings() (string, string) {
 	return audio.NormalizeTransportMode(a.audioTransportMode), audio.NormalizeProfile(a.audioProfile)
 }
 
+// resolveAudioTransport applies "auto" using the route of the live session.
+func (a *App) resolveAudioTransport(kind audio.StreamKind) string {
+	mode, _ := a.currentAudioTransportSettings()
+	route := ""
+	if a.transport != nil {
+		if s := a.transport.GetSession(); s != nil {
+			route = link.KindForAddress(s.RemoteAddr(), link.Adapters())
+		}
+	}
+	return audio.ResolveTransport(kind, mode, route)
+}
+
+// startCapture starts sending a stream. If it is already running (e.g. the
+// peer asked again after losing state), the format is re-announced instead.
+func (a *App) startCapture(kind audio.StreamKind) {
+	if a.audio == nil {
+		return
+	}
+	if a.audio.StartCapture(kind, a.audioCapture[kind]) {
+		return
+	}
+	frames, err := a.audioOut[kind].Reannounce()
+	if err != nil {
+		return // first format not captured yet; it will be announced shortly
+	}
+	a.sendAudioFrames(frames)
+}
+
+// reconfigureCaptures applies a transport/profile change to running captures.
+func (a *App) reconfigureCaptures(reason string) {
+	if a.audio == nil {
+		return
+	}
+	_, profile := a.currentAudioTransportSettings()
+	for _, kind := range []audio.StreamKind{audio.StreamDesktop, audio.StreamMic} {
+		if !a.audio.IsCapturing(kind) {
+			continue
+		}
+		frames, mode, err := a.audioOut[kind].Reconfigure(a.resolveAudioTransport(kind), profile)
+		if err != nil {
+			continue
+		}
+		log.Printf("%s capture: now %s/%s after %s", kind, mode, profile, reason)
+		a.sendAudioFrames(frames)
+	}
+}
+
+// acceptsInboundAudio reports whether received audio for kind should play.
+// The controller only plays what it asked for, so frames still in flight
+// after it turned a stream off don't restart playback.
+func (a *App) acceptsInboundAudio(kind audio.StreamKind) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.sessionRole != "controller" {
+		return true
+	}
+	if kind == audio.StreamMic {
+		return a.micMode == "receive"
+	}
+	return a.audioMode == "remote"
+}
+
+// handleInboundAudioFrame processes transport, format and data frames of a
+// stream strictly in arrival order (all are routed through audioInboundCh).
+func (a *App) handleInboundAudioFrame(kind audio.StreamKind, f Frame) {
+	if a.audio == nil {
+		return
+	}
+	in := a.audioIn[kind]
+	switch f.Type {
+	case protocol.MsgAudioTransport, protocol.MsgMicTransport:
+		if err := in.HandleTransport(f.Payload); err != nil {
+			log.Printf("%s playback: %v", kind, err)
+		}
+	case protocol.MsgAudioFormat, protocol.MsgMicFormat:
+		rate, ch, err := in.HandleFormat(f.Payload)
+		if err != nil {
+			log.Printf("%s playback: %v", kind, err)
+			return
+		}
+		a.audio.Player(kind).SetSource(rate, ch)
+		log.Printf("%s playback: receiving %d Hz, %d ch", kind, rate, ch)
+	default:
+		atomic.AddUint64(&a.recvAudioN, 1)
+		samples, err := in.HandleData(f.Payload)
+		if err != nil {
+			if now := time.Now().Unix(); a.audioDecodeErrLogged.Swap(now) != now {
+				log.Printf("%s playback: %v", kind, err)
+			}
+			return
+		}
+		if samples == nil || !a.acceptsInboundAudio(kind) {
+			return
+		}
+		a.audio.Player(kind).Push(samples)
+		a.audio.StartPlayback(kind)
+	}
+}
+
 func (a *App) currentAudioLatencyState() (int, string, string, int) {
 	a.mu.RLock()
 	rttMs := a.latencyMs
-	transportMode := audio.NormalizeTransportMode(a.audioTransportMode)
-	profile := audio.NormalizeProfile(a.audioProfile)
 	a.mu.RUnlock()
+	transportMode := a.resolveAudioTransport(audio.StreamDesktop)
+	_, profile := a.currentAudioTransportSettings()
 	return rttMs, transportMode, profile, audio.EstimatedPlaybackLatencyMs(rttMs, transportMode, profile)
 }
 
@@ -64,9 +213,9 @@ func (a *App) updateSessionLatency(rttMs int) (bool, string, string, int) {
 	}
 	a.latencyMs = rttMs
 	a.latencyPrev = rttMs
-	transportMode := audio.NormalizeTransportMode(a.audioTransportMode)
-	profile := audio.NormalizeProfile(a.audioProfile)
 	a.mu.Unlock()
+	transportMode := a.resolveAudioTransport(audio.StreamDesktop)
+	_, profile := a.currentAudioTransportSettings()
 	return firstMeasurement, transportMode, profile, audio.EstimatedPlaybackLatencyMs(rttMs, transportMode, profile)
 }
 
@@ -89,14 +238,11 @@ func (a *App) logAudioPipelineConfig(reason string) {
 }
 
 func (a *App) applyAudioQualityProfile() {
-	a.mu.RLock()
-	streamer := a.audio
-	profile := audio.NormalizeProfile(a.audioProfile)
-	a.mu.RUnlock()
-	if streamer == nil {
+	if a.audio == nil {
 		return
 	}
-	if err := streamer.SetQualityProfile(profile); err != nil {
+	_, profile := a.currentAudioTransportSettings()
+	if err := a.audio.SetQualityProfile(profile); err != nil {
 		log.Printf("audio quality profile rejected: %v", err)
 	}
 }
@@ -109,14 +255,10 @@ func (a *App) nextMediaControlGeneration() uint64 {
 	return generation
 }
 
-func (a *App) currentMediaControlGeneration() uint64 {
+func (a *App) mediaControlGenerationIsCurrent(generation uint64) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.mediaControlGeneration
-}
-
-func (a *App) mediaControlGenerationIsCurrent(generation uint64) bool {
-	return generation == a.currentMediaControlGeneration()
+	return generation == a.mediaControlGeneration
 }
 
 func (a *App) scheduleControllerMediaReconcile(name string) {
@@ -132,45 +274,34 @@ func (a *App) scheduleControllerMediaReconcile(name string) {
 }
 
 func (a *App) syncAudioDeviceSelection() {
-	a.mu.RLock()
-	streamer := a.audio
-	captureDeviceID := a.captureDeviceID
-	playbackDeviceID := a.playbackDeviceID
-	micDeviceID := a.micDeviceID
-	micPlaybackDeviceID := a.micPlaybackDeviceID
-	a.mu.RUnlock()
-	if streamer == nil {
+	if a.audio == nil {
 		return
 	}
-	streamer.SetCaptureDeviceID(captureDeviceID)
-	streamer.SetPlaybackDeviceID(playbackDeviceID)
-	streamer.SetMicDeviceID(micDeviceID)
-	streamer.SetMicPlaybackDeviceID(micPlaybackDeviceID)
+	a.mu.RLock()
+	capture, playback, mic, micPlayback := a.captureDeviceID, a.playbackDeviceID, a.micDeviceID, a.micPlaybackDeviceID
+	a.mu.RUnlock()
+	a.audio.SetCaptureDeviceID(capture)
+	a.audio.SetPlaybackDeviceID(playback)
+	a.audio.SetMicDeviceID(mic)
+	a.audio.SetMicPlaybackDeviceID(micPlayback)
 }
 
+// reconcileControllerMediaState brings both streams in line with the
+// controller's settings. Receivers are not reset here; the peer re-announces
+// its format whenever it (re)starts capturing.
 func (a *App) reconcileControllerMediaState(generation uint64) {
 	a.applyAudioQualityProfile()
-	a.syncAudioDeviceSelection()
-	if !a.mediaControlGenerationIsCurrent(generation) {
-		return
-	}
 	a.stopAllAudio()
 	a.stopAllMic()
 	if !a.mediaControlGenerationIsCurrent(generation) {
 		return
 	}
-
-	s := a.transport.GetSession()
-	if s == nil || !a.isController() {
+	if a.transport.GetSession() == nil || !a.isController() {
 		return
 	}
-	a.bumpRealtimeSendGeneration()
-	a.resetAudioPipelines()
 
 	a.mu.RLock()
-	mode := a.audioMode
-	timing := a.audioTiming
-	mic := a.micMode
+	mode, timing, mic := a.audioMode, a.audioTiming, a.micMode
 	a.mu.RUnlock()
 
 	if timing != "always" && !(timing == "switched" && a.inputHook.IsInRemoteMode()) {
@@ -184,51 +315,13 @@ func (a *App) reconcileControllerMediaState(generation uint64) {
 	}
 }
 
-func (a *App) restartControllerMediaIfNeeded() {
-	a.scheduleControllerMediaReconcile("controller-media-restart")
-}
-
-func (a *App) restartPassiveOutboundCaptures(reason string) {
-	if a.audio == nil || a.isController() {
-		return
-	}
-	restartAudio := audioIsCapturing(a.audio)
-	restartMic := audioIsMicCapturing(a.audio)
-	if !restartAudio && !restartMic {
-		return
-	}
-
-	a.bumpRealtimeSendGeneration()
-	if restartAudio {
-		audioStopCapture(a.audio)
-	}
-	if restartMic {
-		audioStopMicCapture(a.audio)
-	}
-	a.resetAudioPipelines()
-
-	if restartAudio {
-		if err := audioStartCapture(a.audio, func(f Frame) {
-			a.handleCapturedAudioFrame(f)
-		}); err != nil {
-			log.Printf("audio capture restart failed after %s: %v", reason, err)
-		}
-	}
-	if restartMic {
-		if err := audioStartMicCapture(a.audio, func(f Frame) {
-			a.handleCapturedMicFrame(f)
-		}); err != nil {
-			log.Printf("mic capture restart failed after %s: %v", reason, err)
-		}
-	}
-}
-
 func (a *App) GetAudioTransport() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return audio.NormalizeTransportMode(a.audioTransportMode)
+	mode, _ := a.currentAudioTransportSettings()
+	return mode
 }
 
+// SetAudioTransport selects the desktop-audio transport: "auto" (default),
+// "pcm" or "opus". The microphone always uses Opus.
 func (a *App) SetAudioTransport(mode string) {
 	if !audio.ValidTransportMode(mode) {
 		return
@@ -237,19 +330,17 @@ func (a *App) SetAudioTransport(mode string) {
 	old := a.audioTransportMode
 	a.audioTransportMode = mode
 	a.mu.Unlock()
-	a.settings.Update(func(s *settings.Settings) { s.AudioTransport = mode })
 	if old == mode {
 		return
 	}
+	a.settings.Update(func(s *settings.Settings) { s.AudioTransport = mode })
 	a.logAudioPipelineConfig("audio-transport-change")
-	a.restartPassiveOutboundCaptures("audio-transport-change")
-	a.scheduleControllerMediaReconcile("audio-transport-change")
+	a.reconfigureCaptures("audio-transport-change")
 }
 
 func (a *App) GetAudioProfile() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return audio.NormalizeProfile(a.audioProfile)
+	_, profile := a.currentAudioTransportSettings()
+	return profile
 }
 
 func (a *App) SetAudioProfile(profile string) {
@@ -260,120 +351,19 @@ func (a *App) SetAudioProfile(profile string) {
 	old := a.audioProfile
 	a.audioProfile = profile
 	a.mu.Unlock()
-	a.settings.Update(func(s *settings.Settings) { s.AudioProfile = profile })
-	a.applyAudioQualityProfile()
 	if old == profile {
 		return
 	}
+	a.settings.Update(func(s *settings.Settings) { s.AudioProfile = profile })
+	a.applyAudioQualityProfile()
 	a.logAudioPipelineConfig("audio-profile-change")
-	a.restartPassiveOutboundCaptures("audio-profile-change")
-	a.scheduleControllerMediaReconcile("audio-profile-change")
+	a.reconfigureCaptures("audio-profile-change")
 }
 
-func (a *App) handleInboundAudioTransport(payload []byte) {
-	if a.audioInbound == nil {
-		return
-	}
-	transportMode, err := audio.DecodeTransportMode(payload)
-	if err != nil {
-		log.Printf("audio playback transport rejected: %v", err)
-		return
-	}
-	if err := a.audioInbound.SetTransport(transportMode); err != nil {
-		log.Printf("audio playback transport unavailable: %v", err)
-	}
+func (a *App) audioPlaying() bool {
+	return a.audio != nil && (a.audio.IsPlaying(audio.StreamDesktop) || a.audio.IsPlaying(audio.StreamMic))
 }
 
-func (a *App) handleInboundAudioFormat(payload []byte) {
-	if a.audio == nil {
-		return
-	}
-	playbackFormat := payload
-	if a.audioInbound != nil {
-		decodedFormat, err := a.audioInbound.ProcessFormat(payload)
-		if err != nil {
-			log.Printf("audio playback format rejected: %v", err)
-			return
-		}
-		playbackFormat = decodedFormat
-	}
-	if err := a.audio.SetPlaybackFormat(playbackFormat); err != nil {
-		log.Printf("audio playback format rejected: %v", err)
-	}
-}
-
-func (a *App) handleInboundAudioData(payload []byte) {
-	if a.audio == nil {
-		return
-	}
-	decodedPayload := payload
-	if a.audioInbound != nil {
-		pcmPayload, err := a.audioInbound.ProcessData(payload)
-		if err != nil {
-			log.Printf("audio playback data rejected: %v", err)
-			return
-		}
-		decodedPayload = pcmPayload
-	}
-	if len(decodedPayload) == 0 {
-		return
-	}
-	if err := a.audio.StartPlayback(); err != nil {
-		log.Printf("audio playback start deferred: %v", err)
-	}
-	a.audio.EnqueueAudio(decodedPayload)
-}
-
-func (a *App) handleInboundMicTransport(payload []byte) {
-	if a.micInbound == nil {
-		return
-	}
-	transportMode, err := audio.DecodeTransportMode(payload)
-	if err != nil {
-		log.Printf("mic playback transport rejected: %v", err)
-		return
-	}
-	if err := a.micInbound.SetTransport(transportMode); err != nil {
-		log.Printf("mic playback transport unavailable: %v", err)
-	}
-}
-
-func (a *App) handleInboundMicFormat(payload []byte) {
-	if a.audio == nil {
-		return
-	}
-	playbackFormat := payload
-	if a.micInbound != nil {
-		decodedFormat, err := a.micInbound.ProcessFormat(payload)
-		if err != nil {
-			log.Printf("mic playback format rejected: %v", err)
-			return
-		}
-		playbackFormat = decodedFormat
-	}
-	if err := a.audio.SetMicPlaybackFormat(playbackFormat); err != nil {
-		log.Printf("mic playback format rejected: %v", err)
-	}
-}
-
-func (a *App) handleInboundMicData(payload []byte) {
-	if a.audio == nil {
-		return
-	}
-	decodedPayload := payload
-	if a.micInbound != nil {
-		pcmPayload, err := a.micInbound.ProcessData(payload)
-		if err != nil {
-			log.Printf("mic playback data rejected: %v", err)
-			return
-		}
-		decodedPayload = pcmPayload
-	}
-	if len(decodedPayload) == 0 {
-		return
-	}
-	if err := a.audio.StartMicPlayback(); err != nil {
-		log.Printf("mic playback start deferred: %v", err)
-	}
-	a.audio.EnqueueMicAudio(decodedPayload)
+func (a *App) audioCapturing() bool {
+	return a.audio != nil && (a.audio.IsCapturing(audio.StreamDesktop) || a.audio.IsCapturing(audio.StreamMic))
 }

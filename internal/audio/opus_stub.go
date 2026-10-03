@@ -1,36 +1,11 @@
-//go:build !cgo
+//go:build !(windows && cgo)
 
 package audio
 
-import "fmt"
+import "errors"
 
-type opusRealtimeEncoder struct{}
+var errOpusUnavailable = errors.New("opus requires the Windows cgo build with libopus")
 
-type opusRealtimeDecoder struct{}
+func newOpusEncoder(opusEncoderConfig) (opusEncoder, error) { return nil, errOpusUnavailable }
 
-func newOpusRealtimeEncoder(label, profile string, sourceFormat []byte) (*opusRealtimeEncoder, []byte, error) {
-	_ = label
-	_ = profile
-	_ = sourceFormat
-	return nil, nil, fmt.Errorf("opus transport requires cgo and libopus")
-}
-
-func (e *opusRealtimeEncoder) Encode(payload []byte) ([][]byte, error) {
-	_ = payload
-	return nil, fmt.Errorf("opus transport requires cgo and libopus")
-}
-
-func (e *opusRealtimeEncoder) Reset() {}
-
-func newOpusRealtimeDecoder(label string, playbackFormat []byte) (*opusRealtimeDecoder, []byte, error) {
-	_ = label
-	_ = playbackFormat
-	return nil, nil, fmt.Errorf("opus transport requires cgo and libopus")
-}
-
-func (d *opusRealtimeDecoder) Decode(payload []byte) ([]byte, error) {
-	_ = payload
-	return nil, fmt.Errorf("opus transport requires cgo and libopus")
-}
-
-func (d *opusRealtimeDecoder) Reset() {}
+func newOpusDecoder(int, int) (opusDecoder, error) { return nil, errOpusUnavailable }

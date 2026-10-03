@@ -10,26 +10,6 @@ import (
 	"multisnekkvm/internal/protocol"
 )
 
-type fakeOutboundRealtimeStream struct {
-	name   string
-	events *[]string
-}
-
-func (f *fakeOutboundRealtimeStream) Configure(transportMode, profile string, format []byte) ([]protocol.Frame, error) {
-	_ = transportMode
-	_ = profile
-	_ = format
-	return nil, nil
-}
-
-func (f *fakeOutboundRealtimeStream) ProcessData(payload []byte) ([]protocol.Frame, error) {
-	_ = payload
-	return nil, nil
-}
-
-func (f *fakeOutboundRealtimeStream) Reset() {
-	*f.events = append(*f.events, f.name+"-reset")
-}
 
 func TestPreferredRoutePrefersLAN(t *testing.T) {
 	route := preferredRoute([]string{"tailscale", "lan", "manual"})
@@ -375,72 +355,6 @@ func TestMsgMouseClickInvalidButtonIsNotTracked(t *testing.T) {
 	}
 	if len(injected) != 1 || injected[0].button != 5 || !injected[0].pressed {
 		t.Fatalf("InjectMouseClick should still be called for untracked buttons, got %v", injected)
-	}
-}
-
-func TestRestartPassiveOutboundCapturesStopsBeforeResetAndRestarts(t *testing.T) {
-	originalAudioIsCapturing := audioIsCapturing
-	originalAudioStopCapture := audioStopCapture
-	originalAudioStartCapture := audioStartCapture
-	originalAudioIsMicCapturing := audioIsMicCapturing
-	originalAudioStopMicCapture := audioStopMicCapture
-	originalAudioStartMicCapture := audioStartMicCapture
-	defer func() {
-		audioIsCapturing = originalAudioIsCapturing
-		audioStopCapture = originalAudioStopCapture
-		audioStartCapture = originalAudioStartCapture
-		audioIsMicCapturing = originalAudioIsMicCapturing
-		audioStopMicCapture = originalAudioStopMicCapture
-		audioStartMicCapture = originalAudioStartMicCapture
-	}()
-
-	var events []string
-	audioIsCapturing = func(a *AudioStreamer) bool {
-		_ = a
-		return true
-	}
-	audioStopCapture = func(a *AudioStreamer) {
-		_ = a
-		events = append(events, "audio-stop")
-	}
-	audioStartCapture = func(a *AudioStreamer, sendFn func(Frame)) error {
-		_ = a
-		_ = sendFn
-		events = append(events, "audio-start")
-		return nil
-	}
-	audioIsMicCapturing = func(a *AudioStreamer) bool {
-		_ = a
-		return true
-	}
-	audioStopMicCapture = func(a *AudioStreamer) {
-		_ = a
-		events = append(events, "mic-stop")
-	}
-	audioStartMicCapture = func(a *AudioStreamer, sendFn func(Frame)) error {
-		_ = a
-		_ = sendFn
-		events = append(events, "mic-start")
-		return nil
-	}
-
-	a := &App{
-		audio:         &AudioStreamer{},
-		sessionRole:   "controlled",
-		audioOutbound: &fakeOutboundRealtimeStream{name: "audio-out", events: &events},
-		micOutbound:   &fakeOutboundRealtimeStream{name: "mic-out", events: &events},
-	}
-
-	a.restartPassiveOutboundCaptures("audio-transport-change")
-
-	want := []string{"audio-stop", "mic-stop", "audio-out-reset", "mic-out-reset", "audio-start", "mic-start"}
-	if len(events) != len(want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-	for i, event := range want {
-		if events[i] != event {
-			t.Fatalf("events[%d] = %q, want %q (all=%v)", i, events[i], event, events)
-		}
 	}
 }
 

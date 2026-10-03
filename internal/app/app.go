@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"multisnekkvm/internal/audio"
@@ -25,30 +26,28 @@ import (
 )
 
 type (
-	DeviceInfo             = identity.DeviceInfo
-	Settings               = settings.Settings
-	SettingsStore          = settings.Store
-	TrustStore             = trust.Store
-	Discovery              = discovery.Discovery
-	Transport              = transport.Transport
-	InputHook              = input.InputHook
-	AudioStreamer          = audio.AudioStreamer
-	AudioDevice            = audio.AudioDevice
-	TailscaleService       = tailscale.Service
-	TailscaleStatus        = tailscale.Status
-	FileTransferManager    = filetransfer.FileTransferManager
-	HealthMonitor          = resilience.HealthMonitor
-	HealthStatus           = resilience.HealthStatus
-	RemediationAlert       = resilience.RemediationAlert
-	PowerWatcher           = sysutil.PowerWatcher
-	clipboardSyncState     = clipboard.State
-	remoteKeyState         = inputstate.KeyState
-	outboundRealtimeStream = audio.OutboundRealtimeStream
-	inboundRealtimeStream  = audio.InboundRealtimeStream
-	Frame                  = protocol.Frame
-	EdgeConfigMsg          = protocol.EdgeConfigMsg
-	PingMsg                = protocol.PingMsg
-	MonitorInfo            = input.MonitorInfo
+	DeviceInfo          = identity.DeviceInfo
+	Settings            = settings.Settings
+	SettingsStore       = settings.Store
+	TrustStore          = trust.Store
+	Discovery           = discovery.Discovery
+	Transport           = transport.Transport
+	InputHook           = input.InputHook
+	AudioStreamer       = audio.AudioStreamer
+	AudioDevice         = audio.AudioDevice
+	TailscaleService    = tailscale.Service
+	TailscaleStatus     = tailscale.Status
+	FileTransferManager = filetransfer.FileTransferManager
+	HealthMonitor       = resilience.HealthMonitor
+	HealthStatus        = resilience.HealthStatus
+	RemediationAlert    = resilience.RemediationAlert
+	PowerWatcher        = sysutil.PowerWatcher
+	clipboardSyncState  = clipboard.State
+	remoteKeyState      = inputstate.KeyState
+	Frame               = protocol.Frame
+	EdgeConfigMsg       = protocol.EdgeConfigMsg
+	PingMsg             = protocol.PingMsg
+	MonitorInfo         = input.MonitorInfo
 )
 
 const (
@@ -87,79 +86,66 @@ const (
 var remoteKeyIdleTimeout = 2 * time.Second
 
 var (
-	NewSettingsStore            = settings.NewStore
-	OpenTrustStore              = trust.OpenStore
-	LoadOrCreateIdentity        = identity.LoadOrCreateIdentity
-	NewInputHook                = input.NewInputHook
-	NewAudioStreamer            = audio.NewAudioStreamer
-	NewFileTransferManager      = filetransfer.NewFileTransferManager
-	NewTransport                = transport.NewTransport
-	NewTailscaleService         = tailscale.NewService
-	NewDiscovery                = discovery.NewDiscovery
-	NewHealthMonitor            = resilience.NewHealthMonitor
-	ListRenderDevices           = audio.ListRenderDevices
-	ListCaptureDevices          = audio.ListCaptureDevices
-	GetAutostart                = autostart.Get
-	SetAutostart                = autostart.Set
-	CaptureActiveDrag           = filetransfer.CaptureActiveDrag
-	InitLogger                  = logutil.InitLogger
-	CloseLogger                 = logutil.CloseLogger
-	GetRecentLogsSnapshot       = logutil.GetRecentLogsSnapshot
-	SafeGo                      = logutil.SafeGo
-	SafeGoRestart               = resilience.SafeGoRestart
-	audioIsCapturing            = func(a *AudioStreamer) bool { return a.IsCapturing() }
-	audioStopCapture            = func(a *AudioStreamer) { a.StopCapture() }
-	audioStartCapture           = func(a *AudioStreamer, sendFn func(Frame)) error { return a.StartCapture(sendFn) }
-	audioIsMicCapturing         = func(a *AudioStreamer) bool { return a.IsMicCapturing() }
-	audioStopMicCapture         = func(a *AudioStreamer) { a.StopMicCapture() }
-	audioStartMicCapture        = func(a *AudioStreamer, sendFn func(Frame)) error { return a.StartMicCapture(sendFn) }
-	newOutboundRealtimeStream   = audio.NewOutboundRealtimeStream
-	newInboundRealtimeStream    = audio.NewInboundRealtimeStream
-	normalizeAudioTransportMode = audio.NormalizeTransportMode
-	validAudioTransportMode     = audio.ValidTransportMode
-	normalizeAudioProfile       = audio.NormalizeProfile
-	validAudioProfile           = audio.ValidProfile
-	decodeAudioTransportMode    = audio.DecodeTransportMode
-	isTailscaleIP               = discovery.IsTailscaleIP
-	DecodeEdgeConfig            = protocol.DecodeEdgeConfig
-	DecodeMouseMove             = protocol.DecodeMouseMove
-	DecodeMouseClick            = protocol.DecodeMouseClick
-	DecodeMouseScroll           = protocol.DecodeMouseScroll
-	DecodeKey                   = protocol.DecodeKey
-	DecodeClipboard             = protocol.DecodeClipboard
-	DecodeClipboardSync         = protocol.DecodeClipboardSync
-	DecodePing                  = protocol.DecodePing
-	DecodeUnicodeText           = protocol.DecodeUnicodeText
-	InjectKey                   = input.InjectKey
-	InjectUnicode               = input.InjectUnicode
-	InjectMouseMove             = input.InjectMouseMove
-	InjectMouseClick            = input.InjectMouseClick
-	InjectMouseScroll           = input.InjectMouseScroll
-	ReleaseAllModifiers         = input.ReleaseAllModifiers
-	GetCursorPosition           = input.GetCursorPosition
-	GetScreenBounds             = input.GetScreenBounds
-	IsSecureDesktopActive       = input.IsSecureDesktopActive
-	GetClipboardText            = input.GetClipboardText
-	GetClipboardTextForSync     = input.GetClipboardTextForSync
-	SetClipboardText            = input.SetClipboardText
-	WatchPowerEvents            = sysutil.WatchPowerEvents
-	EnumLocalMonitors           = input.EnumLocalMonitors
-	setClipboardFilesFn         = filetransfer.SetClipboardFiles
+	NewSettingsStore        = settings.NewStore
+	OpenTrustStore          = trust.OpenStore
+	LoadOrCreateIdentity    = identity.LoadOrCreateIdentity
+	NewInputHook            = input.NewInputHook
+	NewAudioStreamer        = audio.NewAudioStreamer
+	NewFileTransferManager  = filetransfer.NewFileTransferManager
+	NewTransport            = transport.NewTransport
+	NewTailscaleService     = tailscale.NewService
+	NewDiscovery            = discovery.NewDiscovery
+	NewHealthMonitor        = resilience.NewHealthMonitor
+	ListRenderDevices       = audio.ListRenderDevices
+	ListCaptureDevices      = audio.ListCaptureDevices
+	GetAutostart            = autostart.Get
+	SetAutostart            = autostart.Set
+	CaptureActiveDrag       = filetransfer.CaptureActiveDrag
+	InitLogger              = logutil.InitLogger
+	CloseLogger             = logutil.CloseLogger
+	GetRecentLogsSnapshot   = logutil.GetRecentLogsSnapshot
+	SafeGo                  = logutil.SafeGo
+	SafeGoRestart           = resilience.SafeGoRestart
+	isTailscaleIP           = discovery.IsTailscaleIP
+	DecodeEdgeConfig        = protocol.DecodeEdgeConfig
+	DecodeMouseMove         = protocol.DecodeMouseMove
+	DecodeMouseClick        = protocol.DecodeMouseClick
+	DecodeMouseScroll       = protocol.DecodeMouseScroll
+	DecodeKey               = protocol.DecodeKey
+	DecodeClipboard         = protocol.DecodeClipboard
+	DecodeClipboardSync     = protocol.DecodeClipboardSync
+	DecodePing              = protocol.DecodePing
+	DecodeUnicodeText       = protocol.DecodeUnicodeText
+	InjectKey               = input.InjectKey
+	InjectUnicode           = input.InjectUnicode
+	InjectMouseMove         = input.InjectMouseMove
+	InjectMouseClick        = input.InjectMouseClick
+	InjectMouseScroll       = input.InjectMouseScroll
+	ReleaseAllModifiers     = input.ReleaseAllModifiers
+	GetCursorPosition       = input.GetCursorPosition
+	GetScreenBounds         = input.GetScreenBounds
+	IsSecureDesktopActive   = input.IsSecureDesktopActive
+	GetClipboardText        = input.GetClipboardText
+	GetClipboardTextForSync = input.GetClipboardTextForSync
+	SetClipboardText        = input.SetClipboardText
+	WatchPowerEvents        = sysutil.WatchPowerEvents
+	EnumLocalMonitors       = input.EnumLocalMonitors
+	setClipboardFilesFn     = filetransfer.SetClipboardFiles
 )
 
 type PeerInfo struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Address        string   `json:"address"`
-	Addresses      []string `json:"addresses"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Address        string            `json:"address"`
+	Addresses      []string          `json:"addresses"`
 	AddressKinds   map[string]string `json:"addressKinds,omitempty"`
-	Fingerprint    string   `json:"fingerprint"`
-	Source         string   `json:"source"`
-	Routes         []string `json:"routes"`
-	PreferredRoute string   `json:"preferredRoute"`
-	Trusted        bool     `json:"trusted"`
-	Status         string   `json:"status"`
-	LastSeen       int64    `json:"lastSeen"`
+	Fingerprint    string            `json:"fingerprint"`
+	Source         string            `json:"source"`
+	Routes         []string          `json:"routes"`
+	PreferredRoute string            `json:"preferredRoute"`
+	Trusted        bool              `json:"trusted"`
+	Status         string            `json:"status"`
+	LastSeen       int64             `json:"lastSeen"`
 }
 
 type SessionStatus struct {
@@ -206,11 +192,11 @@ type App struct {
 	playbackDeviceID        string
 	micDeviceID             string
 	micPlaybackDeviceID     string
-	realtimeSendGeneration  uint64
-	audioOutbound           outboundRealtimeStream
-	micOutbound             outboundRealtimeStream
-	audioInbound            inboundRealtimeStream
-	micInbound              inboundRealtimeStream
+	audioOut                [2]*audio.OutboundStream // indexed by audio.StreamKind
+	audioIn                 [2]*audio.InboundStream
+	audioCapture            [2]*streamCapture
+	audioDecodeErrLogged    atomic.Int64
+	audioInboundDroppedN    uint64
 	sessionRole             string
 	clipboardState          clipboardSyncState
 	remoteKeyState          remoteKeyState
@@ -227,9 +213,6 @@ type App struct {
 	lastConnectTime         time.Time
 	tray                    *TrayManager
 	quitRequested           bool
-	realtimeSendCh          chan queuedRealtimeFrame
-	realtimeSendWg          sync.WaitGroup
-	realtimeDropCount       uint64
 	mediaControlMu          sync.Mutex
 	mediaControlGeneration  uint64
 	pendingRecvDirs         []string // temp dirs awaiting user save/discard; cleaned on shutdown
