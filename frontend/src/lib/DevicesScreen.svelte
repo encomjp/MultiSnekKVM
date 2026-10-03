@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { orderedRoutes, preferredRouteLabel, routeLabel, timeAgo } from './utils';
-  import type { Peer } from './types';
+  import { endpointLabel, orderedRoutes, routeLabel } from './utils';
+  import type { NetworkInterface, Peer } from './types';
 
   export let peerFilter: 'all' | 'online' | 'trusted' | 'manual' = 'all';
   export let newPeerAddr = '';
@@ -15,6 +15,25 @@
   export let connectingAddress = '';
   export let removingAddress = '';
   export let forgettingPeerID = '';
+  export let networkInterfaces: NetworkInterface[] = [];
+  export let onRefreshNetworkInterfaces: () => void | Promise<void> = () => {};
+
+  let selectedPeerAddresses: Record<string, string> = {};
+
+  function addressForPeer(peer: Peer): string {
+    const selected = selectedPeerAddresses[peer.id];
+    return selected && (peer.addresses || []).includes(selected) ? selected : peer.address;
+  }
+
+  function selectPeerAddress(id: string, event: Event) {
+    selectedPeerAddresses = { ...selectedPeerAddresses, [id]: (event.currentTarget as HTMLSelectElement).value };
+  }
+
+  function interfaceLabel(kind: NetworkInterface['kind']): string {
+    if (kind === 'usb4') return 'USB4 / Thunderbolt';
+    if (kind === 'bluetooth') return 'Bluetooth PAN';
+    return 'Network adapter';
+  }
   export let onAdd: () => void | Promise<void>;
   export let onConnect: (address: string, needsTrust: boolean) => void | Promise<void>;
   export let onDisconnect: () => void | Promise<void>;
@@ -49,14 +68,40 @@
     </div>
 
     <form class="add-form" on:submit|preventDefault={onAdd}>
-      <input class="input add-input" type="text" bind:value={newPeerAddr} placeholder="Add device — IP or hostname" />
-      <button type="submit" class="btn btn-primary">Add</button>
+      <input class="input add-input" type="text" bind:value={newPeerAddr} aria-label="Peer IP address or hostname" placeholder="Peer IP or hostname (port 24831)" autocomplete="off" spellcheck="false" />
+      <button type="submit" class="btn btn-primary" disabled={!newPeerAddr.trim()}>Add</button>
     </form>
   </div>
 
   {#if addError}
-    <p class="inline-error">{addError}</p>
+    <p class="inline-error" role="alert">{addError}</p>
   {/if}
+
+  <details class="connection-guide">
+    <summary>Connect over USB4 / Thunderbolt or Bluetooth <span class="guide-hint">Setup guide</span></summary>
+    <div class="guide-content">
+      <p><strong>USB4 / Thunderbolt:</strong> Connect two compatible computers with a suitable USB4/Thunderbolt cable. If Windows creates a network adapter, use the peer's IP address. An ordinary USB-C cable between two USB hosts does not automatically create a network.</p>
+      <p><strong>Bluetooth:</strong> Pair both PCs and establish a Bluetooth Personal Area Network (PAN) using supported Windows networking/hotspot features. Then connect to the peer's PAN IP address. Audio and file transfers may be slower.</p>
+      <p><strong>USB bridge cable:</strong> Use a purpose-built PC-to-PC bridge whose driver exposes an IP network. A file-transfer-only bridge won't work with MultiSnek.</p>
+      <div class="guide-heading">
+        <h3>Your active network addresses</h3>
+        <button type="button" class="btn btn-secondary" on:click={onRefreshNetworkInterfaces}>Refresh adapters</button>
+      </div>
+      {#if networkInterfaces.length === 0}
+        <p class="guide-muted">No adapter addresses available. Connect the devices first and refresh, or find the peer's IPv4 address with Windows <code>ipconfig</code>.</p>
+      {:else}
+        <div class="interface-list">
+          {#each networkInterfaces as adapter (adapter.name)}
+            <div class="interface-row">
+              <span class="interface-name">{adapter.name} <span class="guide-hint">{interfaceLabel(adapter.kind)}</span></span>
+              <span class="interface-addresses mono selectable">{adapter.addresses.join(' · ')}</span>
+            </div>
+          {/each}
+        </div>
+        <p class="guide-muted">These are this PC's addresses. Enter the other PC's IP above. MultiSnek uses TCP port 24831; ensure the Windows Firewall allows it on this link.</p>
+      {/if}
+    </div>
+  </details>
 
   {#if filteredPeers.length === 0}
     <div class="empty-state">
@@ -75,7 +120,22 @@
                 <span class="badge session-badge">Active</span>
               {/if}
             </div>
-            <p class="device-address mono selectable">{peer.address || '—'}</p>
+            <p class="device-address mono selectable">{addressForPeer(peer) || '—'}</p>
+            {#if (peer.addresses || []).length > 1}
+              <label class="route-picker-label" for="route-{peer.id}">Connection address</label>
+              <select
+                class="input route-picker mono"
+                id="route-{peer.id}"
+                aria-label="Connection address for {peer.name}"
+                value={addressForPeer(peer)}
+                on:change={(event) => selectPeerAddress(peer.id, event)}
+                disabled={sessionConnected || !!connectingAddress}
+              >
+                {#each peer.addresses || [] as address}
+                  <option value={address}>{address} · {endpointLabel(address)}</option>
+                {/each}
+              </select>
+            {/if}
           </div>
 
           <div class="device-badges">
@@ -93,11 +153,11 @@
             {:else}
               <button
                 class="btn {peer.trusted ? 'btn-primary' : 'btn-secondary'}"
-                on:click={() => onConnect(peer.address, !peer.trusted)}
-                disabled={!peer.address || !!connectingAddress || sessionConnected}
+                on:click={() => onConnect(addressForPeer(peer), !peer.trusted)}
+                disabled={!addressForPeer(peer) || !!connectingAddress || sessionConnected}
               >
-                {#if connectingAddress === peer.address}<span class="btn-spinner"></span>{/if}
-                {connectingAddress === peer.address ? 'Connecting…' : peer.trusted ? 'Connect' : 'Pair & Connect'}
+                {#if connectingAddress === addressForPeer(peer)}<span class="btn-spinner"></span>{/if}
+                {connectingAddress === addressForPeer(peer) ? 'Connecting…' : peer.trusted ? 'Connect' : 'Pair & Connect'}
               </button>
             {/if}
             {#if peer.trusted}
@@ -127,6 +187,26 @@
     flex-direction: column;
     gap: 1rem;
   }
+
+  .connection-guide {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+    padding: 0.75rem 1rem;
+  }
+  .connection-guide summary { cursor: pointer; font-weight: 650; color: var(--text-strong); }
+  .guide-hint { font-size: 0.76rem; font-weight: 400; color: var(--text-muted); margin-left: 0.4rem; }
+  .guide-content { display: grid; gap: 0.65rem; margin-top: 0.8rem; color: var(--text-secondary); font-size: 0.84rem; line-height: 1.5; }
+  .guide-content p { margin: 0; }
+  .guide-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+  .guide-heading h3 { font-size: 0.85rem; color: var(--text-strong); }
+  .guide-muted { color: var(--text-muted); }
+  .interface-list { display: grid; gap: 0.4rem; }
+  .interface-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem; padding: 0.5rem 0.7rem; border-radius: 0.55rem; background: var(--panel-strong); }
+  .interface-name { color: var(--text-strong); }
+  .interface-addresses { overflow-wrap: anywhere; }
+  .route-picker-label { display: block; margin-top: 0.4rem; font-size: 0.74rem; color: var(--text-muted); }
+  .route-picker { margin-top: 0.3rem; width: min(100%, 28rem); min-height: 2.2rem; font-size: 0.8rem; }
 
   .toolbar {
     display: flex;
