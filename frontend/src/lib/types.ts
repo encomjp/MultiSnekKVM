@@ -7,6 +7,8 @@ export interface DeviceInfo {
 }
 
 export interface Session {
+  route?: string;
+  remoteAddress?: string;
   connected: boolean;
   controlling: boolean;
   peerName: string;
