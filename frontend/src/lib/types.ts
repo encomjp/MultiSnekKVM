@@ -35,6 +35,7 @@ export interface Peer {
   name: string;
   address: string;
   addresses?: string[];
+  addressKinds?: Record<string, string>;
   fingerprint: string;
   port: number;
   source?: string;
@@ -47,7 +48,7 @@ export interface Peer {
 
 export interface NetworkInterface {
   name: string;
-  kind: 'usb4' | 'bluetooth' | 'network';
+  kind: 'usb4' | 'usb-bridge' | 'ethernet' | 'wifi' | 'bluetooth' | 'network';
   addresses: string[];
 }
 
