@@ -94,6 +94,8 @@ var (
 	NewAudioStreamer            = audio.NewAudioStreamer
 	NewFileTransferManager      = filetransfer.NewFileTransferManager
 	NewTransport                = transport.NewTransport
+	shortPeerID                 = transport.ShortPeerID
+	generatePairingCode         = transport.GeneratePairingCode
 	NewTailscaleService         = tailscale.NewService
 	NewDiscovery                = discovery.NewDiscovery
 	NewHealthMonitor            = resilience.NewHealthMonitor
@@ -101,9 +103,6 @@ var (
 	ListCaptureDevices          = audio.ListCaptureDevices
 	GetAutostart                = autostart.Get
 	SetAutostart                = autostart.Set
-	CaptureActiveDrag           = filetransfer.CaptureActiveDrag
-	InitLogger                  = logutil.InitLogger
-	CloseLogger                 = logutil.CloseLogger
 	GetRecentLogsSnapshot       = logutil.GetRecentLogsSnapshot
 	SafeGo                      = logutil.SafeGo
 	SafeGoRestart               = resilience.SafeGoRestart
@@ -137,7 +136,6 @@ var (
 	GetCursorPosition           = input.GetCursorPosition
 	GetScreenBounds             = input.GetScreenBounds
 	IsSecureDesktopActive       = input.IsSecureDesktopActive
-	GetClipboardText            = input.GetClipboardText
 	GetClipboardTextForSync     = input.GetClipboardTextForSync
 	GetClipboardSequenceNumber  = input.GetClipboardSequenceNumber
 	SetClipboardText            = input.SetClipboardText

@@ -16,12 +16,6 @@ func (a *App) sendFrame(f Frame) error {
 	return a.transport.Send(f)
 }
 
-// handleEdgeDrag is called when a drag (left mouse button held) is detected
-// at the screen edge during a control transition.
-// Disabled: OLE drag capture conflicts with the multi-monitor edge transition;
-// the drag does not cross to the second monitor reliably. To be reworked.
-func (a *App) handleEdgeDrag() {}
-
 func (a *App) sendEdgeConfig() {
 	if a.transport == nil || a.inputHook == nil || a.transport.GetSession() == nil {
 		return

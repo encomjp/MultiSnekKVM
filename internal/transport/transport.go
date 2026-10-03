@@ -28,7 +28,7 @@ const (
 	rateLimitCleanFreq = 60 * time.Second
 )
 
-var pairingCodeGenerator = generateRandomPairingCode
+var pairingCodeGenerator = GeneratePairingCode
 
 // ErrDial marks failures to reach a peer at all (TCP connect or TLS
 // handshake). Callers may retry another address on ErrDial, but must not

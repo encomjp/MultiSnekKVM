@@ -10,7 +10,6 @@ type InputHook struct {
 
 func NewInputHook() *InputHook                                { return &InputHook{} }
 func (ih *InputHook) SetOnStateChange(fn func())              { ih.onStateChange = fn }
-func (ih *InputHook) SetOnEdgeDrag(fn func())                 {}
 func (ih *InputHook) SetConnected(bool, func(protocol.Frame)) {}
 func (ih *InputHook) IsInRemoteMode() bool                    { return false }
 func (ih *InputHook) ExitRemoteMode()                         {}
@@ -24,7 +23,6 @@ func InjectMouseClick(button byte, pressed bool)                        {}
 func InjectMouseScroll(delta int32)                                     {}
 func InjectKey(vkCode uint16, scanCode uint16, flags uint32, down bool) {}
 func ReleaseAllModifiers()                                              {}
-func GetClipboardText() string                                          { return "" }
 func GetClipboardTextForSync() (string, bool)                           { return "", false }
 func GetClipboardSequenceNumber() uint32                                { return 0 }
 func SetClipboardText(text string)                                      {}

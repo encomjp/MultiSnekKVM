@@ -2,11 +2,9 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"net"
 	"sort"
 	"strings"
@@ -305,14 +303,6 @@ func (a *App) Reconnect() error {
 	return fmt.Errorf("all addresses failed: %v", err)
 }
 
-func generatePairingCode() string {
-	value, err := rand.Int(rand.Reader, big.NewInt(1000000))
-	if err != nil {
-		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
-	}
-	return fmt.Sprintf("%06d", value.Int64())
-}
-
 func (a *App) GetLastPeer() map[string]string {
 	cfg := a.settings.Get()
 	if cfg.LastPeerID == "" {
@@ -360,11 +350,4 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 		s.LastPeerAddr = addrs
 	})
 	log.Printf("saved last peer: %s (%s) addrs=%v", peerName, shortPeerID(peerID), addrs)
-}
-
-func shortPeerID(id string) string {
-	if len(id) <= 12 {
-		return id
-	}
-	return id[:12]
 }

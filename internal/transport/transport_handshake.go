@@ -174,7 +174,8 @@ func validatePeerHello(hello protocol.HelloMsg, peerCert *x509.Certificate) erro
 	return nil
 }
 
-func shortPeerID(id string) string {
+// ShortPeerID abbreviates a device ID or fingerprint for logs.
+func ShortPeerID(id string) string {
 	if len(id) <= 12 {
 		return id
 	}
