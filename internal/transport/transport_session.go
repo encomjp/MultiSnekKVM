@@ -43,7 +43,8 @@ func (t *Transport) readLoop(s *Session) {
 			}
 			return
 		}
-		_ = s.conn.SetReadDeadline(time.Time{})
+		// The deadline is replaced before the next read; clearing it here
+		// would only add a syscall per frame.
 
 		if frame.Type == protocol.MsgHeartbeat {
 			continue

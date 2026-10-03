@@ -86,51 +86,48 @@ const (
 var remoteKeyIdleTimeout = 2 * time.Second
 
 var (
-	NewSettingsStore        = settings.NewStore
-	OpenTrustStore          = trust.OpenStore
-	LoadOrCreateIdentity    = identity.LoadOrCreateIdentity
-	NewInputHook            = input.NewInputHook
-	NewAudioStreamer        = audio.NewAudioStreamer
-	NewFileTransferManager  = filetransfer.NewFileTransferManager
-	NewTransport            = transport.NewTransport
-	NewTailscaleService     = tailscale.NewService
-	NewDiscovery            = discovery.NewDiscovery
-	NewHealthMonitor        = resilience.NewHealthMonitor
-	ListRenderDevices       = audio.ListRenderDevices
-	ListCaptureDevices      = audio.ListCaptureDevices
-	GetAutostart            = autostart.Get
-	SetAutostart            = autostart.Set
-	CaptureActiveDrag       = filetransfer.CaptureActiveDrag
-	InitLogger              = logutil.InitLogger
-	CloseLogger             = logutil.CloseLogger
-	GetRecentLogsSnapshot   = logutil.GetRecentLogsSnapshot
-	SafeGo                  = logutil.SafeGo
-	SafeGoRestart           = resilience.SafeGoRestart
-	isTailscaleIP           = discovery.IsTailscaleIP
-	DecodeEdgeConfig        = protocol.DecodeEdgeConfig
-	DecodeMouseMove         = protocol.DecodeMouseMove
-	DecodeMouseClick        = protocol.DecodeMouseClick
-	DecodeMouseScroll       = protocol.DecodeMouseScroll
-	DecodeKey               = protocol.DecodeKey
-	DecodeClipboard         = protocol.DecodeClipboard
-	DecodeClipboardSync     = protocol.DecodeClipboardSync
-	DecodePing              = protocol.DecodePing
-	DecodeUnicodeText       = protocol.DecodeUnicodeText
-	InjectKey               = input.InjectKey
-	InjectUnicode           = input.InjectUnicode
-	InjectMouseMove         = input.InjectMouseMove
-	InjectMouseClick        = input.InjectMouseClick
-	InjectMouseScroll       = input.InjectMouseScroll
-	ReleaseAllModifiers     = input.ReleaseAllModifiers
-	GetCursorPosition       = input.GetCursorPosition
-	GetScreenBounds         = input.GetScreenBounds
-	IsSecureDesktopActive   = input.IsSecureDesktopActive
-	GetClipboardText        = input.GetClipboardText
-	GetClipboardTextForSync = input.GetClipboardTextForSync
-	SetClipboardText        = input.SetClipboardText
-	WatchPowerEvents        = sysutil.WatchPowerEvents
-	EnumLocalMonitors       = input.EnumLocalMonitors
-	setClipboardFilesFn     = filetransfer.SetClipboardFiles
+	NewSettingsStore           = settings.NewStore
+	OpenTrustStore             = trust.OpenStore
+	LoadOrCreateIdentity       = identity.LoadOrCreateIdentity
+	NewInputHook               = input.NewInputHook
+	NewAudioStreamer           = audio.NewAudioStreamer
+	NewFileTransferManager     = filetransfer.NewFileTransferManager
+	NewTransport               = transport.NewTransport
+	shortPeerID                = transport.ShortPeerID
+	generatePairingCode        = transport.GeneratePairingCode
+	NewTailscaleService        = tailscale.NewService
+	NewDiscovery               = discovery.NewDiscovery
+	NewHealthMonitor           = resilience.NewHealthMonitor
+	ListRenderDevices          = audio.ListRenderDevices
+	ListCaptureDevices         = audio.ListCaptureDevices
+	GetAutostart               = autostart.Get
+	SetAutostart               = autostart.Set
+	GetRecentLogsSnapshot      = logutil.GetRecentLogsSnapshot
+	SafeGo                     = logutil.SafeGo
+	SafeGoRestart              = resilience.SafeGoRestart
+	DecodeEdgeConfig           = protocol.DecodeEdgeConfig
+	DecodeMouseMove            = protocol.DecodeMouseMove
+	DecodeMouseClick           = protocol.DecodeMouseClick
+	DecodeMouseScroll          = protocol.DecodeMouseScroll
+	DecodeKey                  = protocol.DecodeKey
+	DecodeClipboard            = protocol.DecodeClipboard
+	DecodeClipboardSync        = protocol.DecodeClipboardSync
+	DecodeUnicodeText          = protocol.DecodeUnicodeText
+	InjectKey                  = input.InjectKey
+	InjectUnicode              = input.InjectUnicode
+	InjectMouseMove            = input.InjectMouseMove
+	InjectMouseClick           = input.InjectMouseClick
+	InjectMouseScroll          = input.InjectMouseScroll
+	ReleaseAllModifiers        = input.ReleaseAllModifiers
+	GetCursorPosition          = input.GetCursorPosition
+	GetScreenBounds            = input.GetScreenBounds
+	IsSecureDesktopActive      = input.IsSecureDesktopActive
+	GetClipboardTextForSync    = input.GetClipboardTextForSync
+	GetClipboardSequenceNumber = input.GetClipboardSequenceNumber
+	SetClipboardText           = input.SetClipboardText
+	WatchPowerEvents           = sysutil.WatchPowerEvents
+	EnumLocalMonitors          = input.EnumLocalMonitors
+	setClipboardFilesFn        = filetransfer.SetClipboardFiles
 )
 
 type PeerInfo struct {
@@ -210,6 +207,7 @@ type App struct {
 	lastPeerAddr            string
 	autoReconnect           bool
 	reconnecting            bool
+	suspended               bool // between OS suspend and resume; suppresses auto-reconnect
 	lastConnectTime         time.Time
 	tray                    *TrayManager
 	quitRequested           bool
@@ -227,16 +225,29 @@ type App struct {
 	// pure mouse movement and mouse-button drags.
 	remoteInputActiveN uint64
 
+	// Atomic flag: non-zero once remote input has been injected on this
+	// machine since the last release. Gates ReleaseAllModifiers so the
+	// controller never sends synthetic modifier key-ups.
+	injectedInputN uint32
+
 	// UnixNano of the last inbound control-input frame (mouse move, click, scroll,
 	// key, or unicode text) received while host is in controlled mode.
 	// Set when active peer control starts and on every control frame.
 	// Reset to 0 by resetControlledState. Used by controlledModeWatchdog.
 	lastRemoteInputNs int64
 
+	// Frontend event deduplication and coalesced session updates.
+	events          eventDeduper
+	sessionUpdateCh chan struct{}
+
+	// Inbound clipboard writes run off the transport read loop; latest wins.
+	clipboardInCh chan string
+
 	// Send mux lanes — see send_mux.go.
 	muxHigh  chan Frame
 	muxMouse chan Frame
 	muxFile  chan Frame
+	muxAudio audioLane
 
 	// Outbound mux diagnostic counters (all updated atomically).
 	muxHighSentN       uint64
@@ -244,7 +255,13 @@ type App struct {
 	muxFileSentN       uint64
 	muxHighDroppedN    uint64
 	muxMouseCoalescedN uint64
-	muxLastSentNs      int64 // UnixNano of last sendFrame call, 0 = never
+	muxAudioSentN      uint64
+	muxAudioDroppedN   uint64
+	muxLastSentNs      int64 // UnixNano of last successful send, 0 = never
+
+	// Rate limiting for send-failure logs (mux goroutine only).
+	muxErrLoggedAt   time.Time
+	muxErrSuppressed int
 
 	// Inbound receive diagnostic counters (all updated atomically).
 	recvMouseMoveN uint64
@@ -268,6 +285,8 @@ func NewApp() *App {
 			Port:        24831,
 		},
 		settings:            settings,
+		sessionUpdateCh:     make(chan struct{}, 1),
+		clipboardInCh:       make(chan string, 1),
 		manualPeers:         make(map[string]PeerInfo),
 		audioMode:           cfg.AudioMode,
 		audioTiming:         cfg.AudioTiming,
