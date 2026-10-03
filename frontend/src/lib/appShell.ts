@@ -204,7 +204,7 @@ export function getAppApi(): AppApi | null {
 
 export function getLastPeerAddress(peerInfo: LastPeerInfo | null) {
   if (!peerInfo) return '';
-  return peerInfo.lan || peerInfo.tailscale || peerInfo.manual || peerInfo.address || '';
+  return peerInfo.usb4 || peerInfo['usb-bridge'] || peerInfo.ethernet || peerInfo.lan || peerInfo.wifi || peerInfo.network || peerInfo.tailscale || peerInfo.bluetooth || peerInfo.manual || peerInfo.address || '';
 }
 
 export function errorMessage(error: unknown, fallback: string) {
