@@ -10,7 +10,6 @@ import (
 	"multisnekkvm/internal/protocol"
 )
 
-
 func TestPreferredRoutePrefersLAN(t *testing.T) {
 	route := preferredRoute([]string{"tailscale", "lan", "manual"})
 	if route != "lan" {
