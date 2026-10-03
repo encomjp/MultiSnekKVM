@@ -24,6 +24,7 @@ type streamCapture struct {
 func (c *streamCapture) OnCaptureFormat(format []byte) {
 	mode := c.a.resolveAudioTransport(c.kind)
 	_, profile := c.a.currentAudioTransportSettings()
+	c.out.SetBitrateCap(audio.LinkBitrateCap(c.a.currentRouteKind()))
 	frames, effective, err := c.out.Configure(mode, profile, format)
 	if err != nil {
 		log.Printf("%s capture: %v", c.kind, err)
@@ -89,16 +90,20 @@ func (a *App) currentAudioTransportSettings() (string, string) {
 	return audio.NormalizeTransportMode(a.audioTransportMode), audio.NormalizeProfile(a.audioProfile)
 }
 
+// currentRouteKind is the route kind of the live session ("" if none).
+func (a *App) currentRouteKind() string {
+	if a.transport != nil {
+		if s := a.transport.GetSession(); s != nil {
+			return link.RouteKind(s.RemoteAddr())
+		}
+	}
+	return ""
+}
+
 // resolveAudioTransport applies "auto" using the route of the live session.
 func (a *App) resolveAudioTransport(kind audio.StreamKind) string {
 	mode, _ := a.currentAudioTransportSettings()
-	route := ""
-	if a.transport != nil {
-		if s := a.transport.GetSession(); s != nil {
-			route = link.KindForAddress(s.RemoteAddr(), link.Adapters())
-		}
-	}
-	return audio.ResolveTransport(kind, mode, route)
+	return audio.ResolveTransport(kind, mode, a.currentRouteKind())
 }
 
 // startCapture starts sending a stream. If it is already running (e.g. the
@@ -127,6 +132,7 @@ func (a *App) reconfigureCaptures(reason string) {
 		if !a.audio.IsCapturing(kind) {
 			continue
 		}
+		a.audioOut[kind].SetBitrateCap(audio.LinkBitrateCap(a.currentRouteKind()))
 		frames, mode, err := a.audioOut[kind].Reconfigure(a.resolveAudioTransport(kind), profile)
 		if err != nil {
 			continue

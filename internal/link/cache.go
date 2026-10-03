@@ -4,6 +4,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"multisnekkvm/internal/bluetooth"
 )
 
 // Enumerating Windows adapters (net.Interfaces, per-interface Addrs and
@@ -54,6 +56,9 @@ func RefreshAdapters() []Adapter { return defaultCache.get(true) }
 
 // RouteKind returns the cached route kind for a host:port address.
 func RouteKind(address string) string {
+	if bluetooth.IsAddress(address) {
+		return "bluetooth"
+	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return "network"

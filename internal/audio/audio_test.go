@@ -367,3 +367,38 @@ func TestWorkerStopWaitsAndRestarts(t *testing.T) {
 	}
 	w.stopAndWait()
 }
+
+func TestBluetoothAlwaysUsesOpusAndCapsBitrate(t *testing.T) {
+	for _, mode := range []string{TransportAuto, TransportPCM, TransportOpus} {
+		if got := ResolveTransport(StreamDesktop, mode, "bluetooth"); got != TransportOpus {
+			t.Errorf("desktop audio over bluetooth with %q = %q, want opus", mode, got)
+		}
+	}
+	if LinkBitrateCap("bluetooth") != 96000 || LinkBitrateCap("wifi") != 0 || LinkBitrateCap("") != 0 {
+		t.Fatal("bitrate cap only applies to bluetooth")
+	}
+
+	var got opusEncoderConfig
+	old := opusEncoderFactory
+	opusEncoderFactory = func(cfg opusEncoderConfig) (opusEncoder, error) { got = cfg; return &fakeOpusEncoder{}, nil }
+	t.Cleanup(func() { opusEncoderFactory = old })
+
+	desktop := NewOutboundStream(StreamDesktop)
+	desktop.SetBitrateCap(LinkBitrateCap("bluetooth"))
+	if _, mode, err := desktop.Configure(TransportOpus, audioProfileMusic, newPCM16WaveFormat(48000, 2)); err != nil || mode != TransportOpus {
+		t.Fatalf("configure: %v %q", err, mode)
+	}
+	if got.Bitrate != 96000 {
+		t.Fatalf("music profile over bluetooth encodes at %d bit/s, want 96000", got.Bitrate)
+	}
+	desktop.SetBitrateCap(0)
+	if _, _, err := desktop.Reconfigure(TransportOpus, audioProfileMusic); err != nil || got.Bitrate != 256000 {
+		t.Fatalf("uncapped music = %d (%v)", got.Bitrate, err)
+	}
+
+	mic := NewOutboundStream(StreamMic)
+	mic.SetBitrateCap(LinkBitrateCap("bluetooth"))
+	if _, _, err := mic.Configure(TransportOpus, audioProfileBalanced, newPCM16WaveFormat(48000, 1)); err != nil || got.Bitrate != micOpusBitrate {
+		t.Fatalf("mic bitrate %d (%v), cap must not raise it", got.Bitrate, err)
+	}
+}

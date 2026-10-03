@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"multisnekkvm/internal/bluetooth"
 	"multisnekkvm/internal/identity"
 	"multisnekkvm/internal/protocol"
 )
@@ -57,6 +58,54 @@ func (t *Transport) Start(port int) error {
 	return nil
 }
 
+// Serve accepts sessions on an additional listener (e.g. Bluetooth RFCOMM).
+// The same TLS 1.3 mutual-certificate handshake, pairing and rate limiting
+// apply as on TCP. It returns once the accept loop is running; closing l
+// stops it.
+func (t *Transport) Serve(l net.Listener) error {
+	cert, err := t.localCertificate()
+	if err != nil {
+		return fmt.Errorf("load cert: %w", err)
+	}
+	go t.acceptLoop(tls.NewListener(l, &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAnyClientCert,
+	}))
+	return nil
+}
+
+// SetBluetoothDialer sets how "bt://" addresses are dialed.
+func (t *Transport) SetBluetoothDialer(dial func(address string, timeout time.Duration) (net.Conn, error)) {
+	t.mu.Lock()
+	t.btDial = dial
+	t.mu.Unlock()
+}
+
+// dialPeer opens the TLS client connection to address: TCP, or Bluetooth for
+// "bt://" addresses. The TLS handshake for Bluetooth runs in the hello
+// exchange (with its deadline), as for any pre-connected conn.
+func (t *Transport) dialPeer(address string, cfg *tls.Config) (*tls.Conn, error) {
+	if bluetooth.IsAddress(address) {
+		t.mu.RLock()
+		dial := t.btDial
+		t.mu.RUnlock()
+		if dial == nil {
+			return nil, &dialError{err: bluetooth.ErrUnavailable}
+		}
+		raw, err := dial(address, handshakeTimeout)
+		if err != nil {
+			return nil, &dialError{err: err}
+		}
+		return tls.Client(raw, cfg), nil
+	}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: handshakeTimeout}, "tcp", address, cfg)
+	if err != nil {
+		return nil, &dialError{err: err}
+	}
+	return conn, nil
+}
+
 func (t *Transport) Stop() {
 	t.mu.Lock()
 	l := t.listener
@@ -105,7 +154,11 @@ func (t *Transport) acceptLoop(l net.Listener) {
 
 		// Per-IP rate limiting: reject connections that exceed the
 		// allowed rate within the sliding window.
-		remoteIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+		// TCP peers are limited per IP; Bluetooth peers (no host:port) per device.
+		remoteIP := conn.RemoteAddr().String()
+		if host, _, err := net.SplitHostPort(remoteIP); err == nil {
+			remoteIP = host
+		}
 		if t.connRateLimited(remoteIP) {
 			log.Printf("rate-limited inbound connection from %s", remoteIP)
 			conn.Close()
@@ -188,14 +241,13 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 	}
 
 	// Dial, handshake and authorization happen outside connectMu.
-	dialer := &net.Dialer{Timeout: handshakeTimeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+	conn, err := t.dialPeer(address, &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		return &dialError{err: err}
+		return err
 	}
 	peerHello, peerFingerprint, err := t.exchangeHelloOutbound(conn, pairingCode)
 	if err != nil {

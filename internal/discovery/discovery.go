@@ -42,6 +42,14 @@ type DiscoveredPeer struct {
 	addressSeen  map[string]time.Time
 }
 
+// ExtraPeer is a peer found outside UDP discovery (e.g. a paired Bluetooth
+// device). It merges into the peer with the same DeviceID, gaining Address.
+type ExtraPeer struct {
+	DeviceID string
+	Name     string
+	Address  string
+}
+
 // IPsProvider is satisfied by anything that can return Tailscale target IPs.
 type IPsProvider interface {
 	TargetIPs() []string
@@ -53,6 +61,54 @@ type Discovery struct {
 	tailscale IPsProvider
 	mu        sync.RWMutex
 	peers     map[string]*DiscoveredPeer
+	extra     func() []ExtraPeer
+}
+
+// SetExtraSource registers a provider of peers found by other means. It is
+// called from Peers(), so it must be cheap and must not call back into d.
+func (d *Discovery) SetExtraSource(fn func() []ExtraPeer) {
+	d.mu.Lock()
+	d.extra = fn
+	d.mu.Unlock()
+}
+
+func mergeExtraPeers(result []DiscoveredPeer, extras []ExtraPeer, now time.Time) []DiscoveredPeer {
+	index := make(map[string]int, len(result))
+	for i := range result {
+		index[result[i].DeviceID] = i
+	}
+	for _, e := range extras {
+		if e.DeviceID == "" || e.Address == "" {
+			continue
+		}
+		i, ok := index[e.DeviceID]
+		if !ok {
+			if len(result) >= maxPeers {
+				continue
+			}
+			result = append(result, DiscoveredPeer{DeviceID: e.DeviceID, Name: e.Name, LastSeen: now})
+			i = len(result) - 1
+			index[e.DeviceID] = i
+		}
+		p := &result[i]
+		if p.Name == "" {
+			p.Name = e.Name
+		}
+		if len(p.Addresses) >= maxAddressesPerPeer {
+			continue
+		}
+		dup := false
+		for _, a := range p.Addresses {
+			if a == e.Address {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			p.Addresses = append(p.Addresses, e.Address)
+		}
+	}
+	return result
 }
 
 func NewDiscovery(device identity.DeviceInfo, broadcastPort int, ts IPsProvider) *Discovery {
@@ -90,7 +146,11 @@ func (d *Discovery) Peers() []DiscoveredPeer {
 		copyPeer.addressSeen = nil
 		result = append(result, copyPeer)
 	}
+	extra := d.extra
 	d.mu.RUnlock()
+	if extra != nil {
+		result = mergeExtraPeers(result, extra(), time.Now())
+	}
 
 	// Detect the Windows-selected outgoing network interface outside the
 	// discovery mutex. USB4NET and network-class USB bridges are ordinary

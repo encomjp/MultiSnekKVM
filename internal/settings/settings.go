@@ -37,6 +37,9 @@ type Settings struct {
 
 	AutoReconnect *bool `json:"autoReconnect,omitempty"`
 
+	// BluetoothEnabled turns the native Bluetooth link on or off; nil = on.
+	BluetoothEnabled *bool `json:"bluetoothEnabled,omitempty"`
+
 	// Exit hotkey. ExitVKCode==0 means ESC (always active as fallback).
 	// ExitModifiers bitmask: 1=Ctrl, 2=Alt, 4=Shift, 8=Win.
 	ExitVKCode    uint16 `json:"exitVKCode,omitempty"`
@@ -144,6 +147,7 @@ func (s *Store) load() {
 	s.data.LastPeerID = loaded.LastPeerID
 	s.data.LastPeerName = loaded.LastPeerName
 	s.data.AutoReconnect = loaded.AutoReconnect
+	s.data.BluetoothEnabled = loaded.BluetoothEnabled
 	s.data.LastPeerAddr = copyLastPeerAddr(loaded.LastPeerAddr)
 
 	// Exit hotkey
