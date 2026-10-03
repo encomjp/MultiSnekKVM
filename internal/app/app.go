@@ -152,6 +152,7 @@ type PeerInfo struct {
 	Name           string   `json:"name"`
 	Address        string   `json:"address"`
 	Addresses      []string `json:"addresses"`
+	AddressKinds   map[string]string `json:"addressKinds,omitempty"`
 	Fingerprint    string   `json:"fingerprint"`
 	Source         string   `json:"source"`
 	Routes         []string `json:"routes"`
