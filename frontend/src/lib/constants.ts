@@ -15,4 +15,4 @@ export const emptyTailscale = {
   lastError: '',
 };
 
-export const routeRank = { lan: 0, tailscale: 1, manual: 2 };
+export const routeRank = { usb4: 0, 'usb-bridge': 1, ethernet: 2, lan: 3, wifi: 4, network: 5, tailscale: 6, bluetooth: 7, manual: 8 };
