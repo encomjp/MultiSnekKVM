@@ -7,6 +7,7 @@
 
   const app = getAppState();
   const settings = app.settings;
+  const bluetooth = app.bluetooth;
 
   const THEME_OPTIONS: ReadonlyArray<SegmentOption<ThemePreference>> = [
     { value: 'dark', label: 'Dark' },
@@ -40,6 +41,15 @@
       pending={settings.status.autoReconnect.pending}
       error={settings.status.autoReconnect.error}
       onChange={(value) => settings.set('autoReconnect', value)}
+    />
+    <Toggle
+      label="Bluetooth connections"
+      description="Find and connect to paired PCs directly over Bluetooth, no network needed"
+      checked={bluetooth.status.enabled}
+      disabled={!bluetooth.status.available}
+      pending={bluetooth.pending}
+      error={bluetooth.error}
+      onChange={(value) => bluetooth.setEnabled(value)}
     />
   </Card>
 

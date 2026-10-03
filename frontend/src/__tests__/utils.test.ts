@@ -11,6 +11,7 @@ import {
   healthSummary,
   hostOf,
   interfaceLabel,
+  isBluetoothAddress,
   jitterLabel,
   lastPeerAddress,
   lastPeerRoute,
@@ -33,7 +34,7 @@ describe('routeLabel', () => {
     ['usb-bridge', 'USB network bridge'],
     ['ethernet', 'Ethernet'],
     ['wifi', 'Wi-Fi'],
-    ['bluetooth', 'Bluetooth PAN'],
+    ['bluetooth', 'Bluetooth'],
     ['network', 'Network'],
     ['tailscale', 'Tailnet'],
     ['lan', 'LAN'],
@@ -100,6 +101,50 @@ describe('endpoint labels', () => {
       ['Ethernet', false],
       ['Tailnet', false],
     ]);
+  });
+});
+
+describe('bluetooth addresses', () => {
+  const BT = 'bt://00:1A:7D:DA:71:27';
+
+  it('recognizes bt:// addresses', () => {
+    expect(isBluetoothAddress(BT)).toBe(true);
+    expect(isBluetoothAddress('BT://00:1A:7D:DA:71:27')).toBe(true);
+    expect(isBluetoothAddress('00:1A:7D:DA:71:27')).toBe(false);
+    expect(isBluetoothAddress('192.168.0.2:24831')).toBe(false);
+    expect(isBluetoothAddress(undefined)).toBe(false);
+  });
+
+  it('never splits a bt:// address into host and port', () => {
+    expect(hostOf(BT)).toBe(BT);
+    expect(endpointLabel(BT)).toBe('Bluetooth');
+  });
+
+  it('labels the direct link "Bluetooth" and PAN "Bluetooth PAN"', () => {
+    expect(routeLabel('bluetooth')).toBe('Bluetooth');
+    expect(routeLabel('bluetooth', BT)).toBe('Bluetooth');
+    expect(routeLabel('bluetooth', '192.168.44.2:24831')).toBe('Bluetooth PAN');
+    expect(interfaceLabel('bluetooth')).toBe('Bluetooth PAN');
+  });
+
+  it('labels peer addresses by their kind and address', () => {
+    const p = peer({
+      address: BT,
+      addresses: [BT, '192.168.44.2:24831'],
+      addressKinds: { [BT]: 'bluetooth', '192.168.44.2:24831': 'bluetooth' },
+    });
+    expect(addressLabel(p, BT)).toBe('Bluetooth');
+    expect(addressLabel(p, '192.168.44.2:24831')).toBe('Bluetooth PAN');
+    expect(addressLabel(peer(), BT)).toBe('Bluetooth');
+  });
+
+  it('keeps Bluetooth last among real routes', () => {
+    const p = peer({
+      address: '192.168.0.57:24831',
+      addresses: [BT, '100.88.3.14:24831', '192.168.0.57:24831'],
+      addressKinds: { [BT]: 'bluetooth', '100.88.3.14:24831': 'tailscale', '192.168.0.57:24831': 'wifi' },
+    });
+    expect(peerRoutes(p).map((r) => r.label)).toEqual(['Wi-Fi', 'Tailnet', 'Bluetooth']);
   });
 });
 

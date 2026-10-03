@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-10-03
+
+### Added
+
+- **Native Bluetooth link.** Two paired Windows PCs can now connect directly over Classic Bluetooth (RFCOMM) with no network setup. The same TLS 1.3 session, first-time PIN pairing, trust checks and rate limiting run on top of it, so input, clipboard, files and audio all work.
+- **Bluetooth discovery.** Each PC advertises a MultiSnek service to its paired devices, so paired PCs running MultiSnek appear automatically under Devices (merged with their LAN/Tailscale entry) and can also be added by hand as `bt://AA:BB:CC:DD:EE:FF` or a bare MAC address.
+- Devices screen: Bluetooth card with status, refresh and an on/off toggle; Settings: "Bluetooth connections" toggle. Direct Bluetooth is labelled "Bluetooth" and the older network-tethering kind stays "Bluetooth PAN".
+
+### Changed
+
+- Over Bluetooth, audio is always compressed (Opus): desktop audio is capped at 96 kbit/s, the microphone stays at 64 kbit/s, whatever the audio transport setting says. Bluetooth ranks after every IP route, so it is only used when nothing faster is available.
+
+### Notes
+
+- Pair both PCs in Windows Bluetooth settings first. Classic Bluetooth gives roughly 1-2 Mbit/s shared, so large file transfers are slow.
+- The Windows Bluetooth calls (service registration and lookup, RFCOMM connect) are covered by unit tests of the surrounding logic and by tests of the connection layer over real Winsock sockets, but had not been run on two physical Bluetooth radios at release time.
+
 ## [0.3.0] - 2026-10-03
 
 ### Breaking

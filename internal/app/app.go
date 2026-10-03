@@ -9,6 +9,7 @@ import (
 
 	"multisnekkvm/internal/audio"
 	"multisnekkvm/internal/autostart"
+	"multisnekkvm/internal/bluetooth"
 	"multisnekkvm/internal/clipboard"
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/filetransfer"
@@ -167,6 +168,7 @@ type App struct {
 	trust     *TrustStore
 	inputHook *InputHook
 	audio     *AudioStreamer
+	bluetooth *bluetooth.Manager
 	tailscale *TailscaleService
 	fileTx    *FileTransferManager
 	health    *HealthMonitor

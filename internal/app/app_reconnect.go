@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"multisnekkvm/internal/bluetooth"
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/link"
 	"multisnekkvm/internal/transport"
@@ -45,9 +46,12 @@ func reconnectCandidatesFor(cfg Settings, peers []discovery.DiscoveredPeer) ([]s
 			kind := peer.AddressKinds[address]
 			if kind == "" {
 				host, _, err := net.SplitHostPort(address)
-				if err == nil && link.IsTailscaleIP(net.ParseIP(host)) {
+				switch {
+				case bluetooth.IsAddress(address):
+					kind = "bluetooth"
+				case err == nil && link.IsTailscaleIP(net.ParseIP(host)):
 					kind = "tailscale"
-				} else {
+				default:
 					kind = "lan"
 				}
 			}

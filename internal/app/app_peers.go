@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"multisnekkvm/internal/bluetooth"
 	"multisnekkvm/internal/discovery"
 	"multisnekkvm/internal/link"
 	"multisnekkvm/internal/logutil"
@@ -92,6 +93,11 @@ func (a *App) GetPeers() []PeerInfo {
 			mp.Addresses = []string{mp.Address}
 			mp.Routes = []string{"manual"}
 			mp.PreferredRoute = "manual"
+			if bluetooth.IsAddress(mp.Address) {
+				mp.Routes = []string{"bluetooth"}
+				mp.PreferredRoute = "bluetooth"
+				mp.AddressKinds = map[string]string{mp.Address: "bluetooth"}
+			}
 			peers = append(peers, mp)
 		}
 	}
@@ -292,6 +298,17 @@ func normalizePeerAddress(raw string, defaultPort int) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", fmt.Errorf("address is required")
+	}
+
+	// Bluetooth devices: "bt://AA:BB:CC:DD:EE:FF", or a bare MAC address
+	// (which cannot be mistaken for an IPv6 address: it has only 6 groups).
+	if bluetooth.IsAddress(trimmed) {
+		return bluetooth.NormalizeAddress(trimmed)
+	}
+	if net.ParseIP(trimmed) == nil && strings.Count(trimmed, ":") == 5 {
+		if normalized, err := bluetooth.NormalizeAddress(trimmed); err == nil {
+			return normalized, nil
+		}
 	}
 
 	if host, port, err := net.SplitHostPort(trimmed); err == nil {
