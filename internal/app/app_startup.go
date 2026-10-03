@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -134,6 +135,8 @@ func (a *App) Startup(ctx context.Context) {
 	})
 
 	a.transport = NewTransport(a.device, identity, trustStore)
+	// Mux goroutines read a.transport; start them only once it is set.
+	a.startSendMux()
 	a.transport.OnFrame = func(f Frame) {
 		// File-transfer and audio frames are dispatched to dedicated goroutines to
 		// prevent disk I/O and WASAPI decode from blocking the readLoop goroutine.
@@ -287,7 +290,7 @@ func (a *App) Startup(ctx context.Context) {
 		return true, st.BackendState
 	})
 	a.health.Register("send-mux", func() (bool, string) {
-		queuedAny := len(a.muxHigh) > 0 || len(a.muxMouse) > 0 || len(a.muxFile) > 0
+		queuedAny := len(a.muxHigh) > 0 || len(a.muxMouse) > 0 || len(a.muxFile) > 0 || a.muxAudio.len() > 0
 		if !queuedAny {
 			return true, "idle"
 		}
@@ -297,14 +300,26 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		idleMs := time.Since(time.Unix(0, lastNs)).Milliseconds()
 		if idleMs >= 1000 {
-			return false, fmt.Sprintf("stalled %dms (H:%d M:%d F:%d)", idleMs, len(a.muxHigh), len(a.muxMouse), len(a.muxFile))
+			return false, fmt.Sprintf("stalled %dms (H:%d M:%d A:%d F:%d)", idleMs, len(a.muxHigh), len(a.muxMouse), a.muxAudio.len(), len(a.muxFile))
 		}
-		return true, fmt.Sprintf("active H:%d M:%d F:%d", len(a.muxHigh), len(a.muxMouse), len(a.muxFile))
+		return true, fmt.Sprintf("active H:%d M:%d A:%d F:%d", len(a.muxHigh), len(a.muxMouse), a.muxAudio.len(), len(a.muxFile))
 	})
+	// ReadMemStats stops the world; sample it at most once a minute even
+	// though health checks run every few seconds. The check can run
+	// concurrently (health loop and GetHealthStatus), hence the mutex.
+	var memMu sync.Mutex
+	var memSampledAt time.Time
+	var memHeapMB uint64
 	a.health.Register("memory", func() (bool, string) {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		heapMB := m.HeapAlloc / 1024 / 1024
+		memMu.Lock()
+		if memSampledAt.IsZero() || time.Since(memSampledAt) >= time.Minute {
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			memHeapMB = m.HeapAlloc / 1024 / 1024
+			memSampledAt = time.Now()
+		}
+		heapMB := memHeapMB
+		memMu.Unlock()
 		if heapMB > 512 {
 			return false, fmt.Sprintf("heap %dMB (high — consider restarting)", heapMB)
 		}

@@ -260,6 +260,7 @@ type App struct {
 	muxHigh  chan Frame
 	muxMouse chan Frame
 	muxFile  chan Frame
+	muxAudio audioLane
 
 	// Outbound mux diagnostic counters (all updated atomically).
 	muxHighSentN       uint64
@@ -267,7 +268,13 @@ type App struct {
 	muxFileSentN       uint64
 	muxHighDroppedN    uint64
 	muxMouseCoalescedN uint64
-	muxLastSentNs      int64 // UnixNano of last sendFrame call, 0 = never
+	muxAudioSentN      uint64
+	muxAudioDroppedN   uint64
+	muxLastSentNs      int64 // UnixNano of last successful send, 0 = never
+
+	// Rate limiting for send-failure logs (mux goroutine only).
+	muxErrLoggedAt   time.Time
+	muxErrSuppressed int
 
 	// Inbound receive diagnostic counters (all updated atomically).
 	recvMouseMoveN uint64

@@ -11,15 +11,9 @@ func (a *App) sendFrame(f Frame) error {
 	if a.transport == nil {
 		return fmt.Errorf("transport unavailable")
 	}
-	start := time.Now()
-	err := a.transport.Send(f)
-	if ms := time.Since(start).Milliseconds(); ms >= 10 {
-		log.Printf("sendFrame: slow write type=0x%02x took=%dms", f.Type, ms)
-	}
-	if err != nil {
-		log.Printf("send frame 0x%02x failed: %v", f.Type, err)
-	}
-	return err
+	// Slow writes and failures are logged (rate-limited) by muxSend, the
+	// only caller.
+	return a.transport.Send(f)
 }
 
 // handleEdgeDrag is called when a drag (left mouse button held) is detected
