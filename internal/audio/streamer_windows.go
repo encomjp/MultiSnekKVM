@@ -132,6 +132,11 @@ type AudioDevice struct {
 }
 
 type AudioStreamer struct {
+	// Lifecycle locks serialize Start/Stop and their WaitGroup transitions.
+	capLifecycle sync.Mutex
+	playLifecycle sync.Mutex
+	micCapLifecycle sync.Mutex
+	micPlayLifecycle sync.Mutex
 	mu        sync.Mutex
 	capturing bool
 	playing   bool
