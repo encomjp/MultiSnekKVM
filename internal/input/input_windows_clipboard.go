@@ -14,6 +14,13 @@ func GetClipboardText() string {
 	return text
 }
 
+// GetClipboardSequenceNumber returns the clipboard sequence number, which
+// changes whenever clipboard contents change. Zero means unavailable.
+func GetClipboardSequenceNumber() uint32 {
+	n, _, _ := pGetClipboardSeqNum.Call()
+	return uint32(n)
+}
+
 func GetClipboardTextForSync() (string, bool) {
 	return getClipboardText(clipboard.MaxClipboardUTF16Bytes, clipboard.MaxClipboardTextBytes)
 }

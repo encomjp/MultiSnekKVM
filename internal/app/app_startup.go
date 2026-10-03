@@ -85,7 +85,7 @@ func (a *App) Startup(ctx context.Context) {
 		}
 	}
 	a.inputHook.SetOnStateChange(func() {
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+		a.emitSessionUpdated()
 		a.handleControlStateChange()
 	})
 	a.inputHook.SetOnEdgeDrag(func() {
@@ -193,7 +193,7 @@ func (a *App) Startup(ctx context.Context) {
 		a.sessionRole = role
 		a.mu.Unlock()
 		a.saveLastPeer(peerID, peerName)
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+		a.emitSessionUpdated()
 		if role == "controller" {
 			a.mu.RLock()
 			mode := a.audioMode
@@ -207,7 +207,7 @@ func (a *App) Startup(ctx context.Context) {
 				a.startMicForMode(mic)
 			}
 		}
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitPeersUpdated()
 	}
 	a.transport.OnDisconnect = func() {
 		a.drainSendMux()
@@ -231,8 +231,8 @@ func (a *App) Startup(ctx context.Context) {
 		alreadyReconnecting := a.reconnecting
 		connDuration := time.Since(a.lastConnectTime)
 		a.mu.Unlock()
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitSessionUpdated()
+		a.emitPeersUpdated()
 		if reconnect && peerAddr != "" && !alreadyReconnecting {
 			if connDuration < 3*time.Second {
 				log.Printf("auto-reconnect: skipped — connection lasted %v (likely rejected by peer)", connDuration)
@@ -315,6 +315,8 @@ func (a *App) Startup(ctx context.Context) {
 	SafeGoRestart(a.ctx, "discovery", func(ctx context.Context) { a.discovery.Run(ctx) })
 	SafeGoRestart(a.ctx, "emit-updates", func(ctx context.Context) { a.emitUpdates() })
 	SafeGoRestart(a.ctx, "clipboard-sync", func(ctx context.Context) { a.clipboardSync() })
+	SafeGoRestart(a.ctx, "clipboard-writer", a.clipboardWriter)
+	SafeGoRestart(a.ctx, "session-update", func(ctx context.Context) { a.sessionUpdateLoop() })
 	SafeGoRestart(a.ctx, "latency-loop", func(ctx context.Context) { a.latencyLoop() })
 	SafeGoRestart(a.ctx, "secure-desktop-monitor", func(ctx context.Context) { a.secureDesktopMonitor(ctx) })
 	SafeGoRestart(a.ctx, "controlled-mode-watchdog", func(ctx context.Context) { a.controlledModeWatchdog(ctx) })

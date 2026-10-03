@@ -49,10 +49,11 @@ func KindFromNames(name, description string) string {
 	return Kind(name)
 }
 
-// Adapters returns active interfaces with usable IP addresses. Adapter
-// descriptions vary by Windows driver; an unrecognized name is "network",
-// never assumed to be USB or Ethernet.
-func Adapters() []Adapter {
+// EnumerateAdapters returns active interfaces with usable IP addresses by
+// querying the OS directly. Adapter descriptions vary by Windows driver; an
+// unrecognized name is "network", never assumed to be USB or Ethernet.
+// Most callers should use the cached Adapters instead.
+func EnumerateAdapters() []Adapter {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return []Adapter{}

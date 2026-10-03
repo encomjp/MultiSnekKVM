@@ -120,7 +120,6 @@ var (
 	normalizeAudioProfile       = audio.NormalizeProfile
 	validAudioProfile           = audio.ValidProfile
 	decodeAudioTransportMode    = audio.DecodeTransportMode
-	isTailscaleIP               = discovery.IsTailscaleIP
 	DecodeEdgeConfig            = protocol.DecodeEdgeConfig
 	DecodeMouseMove             = protocol.DecodeMouseMove
 	DecodeMouseClick            = protocol.DecodeMouseClick
@@ -141,6 +140,7 @@ var (
 	IsSecureDesktopActive       = input.IsSecureDesktopActive
 	GetClipboardText            = input.GetClipboardText
 	GetClipboardTextForSync     = input.GetClipboardTextForSync
+	GetClipboardSequenceNumber  = input.GetClipboardSequenceNumber
 	SetClipboardText            = input.SetClipboardText
 	WatchPowerEvents            = sysutil.WatchPowerEvents
 	EnumLocalMonitors           = input.EnumLocalMonitors
@@ -250,6 +250,13 @@ type App struct {
 	// Reset to 0 by resetControlledState. Used by controlledModeWatchdog.
 	lastRemoteInputNs int64
 
+	// Frontend event deduplication and coalesced session updates.
+	events          eventDeduper
+	sessionUpdateCh chan struct{}
+
+	// Inbound clipboard writes run off the transport read loop; latest wins.
+	clipboardInCh chan string
+
 	// Send mux lanes — see send_mux.go.
 	muxHigh  chan Frame
 	muxMouse chan Frame
@@ -285,6 +292,8 @@ func NewApp() *App {
 			Port:        24831,
 		},
 		settings:            settings,
+		sessionUpdateCh:     make(chan struct{}, 1),
+		clipboardInCh:       make(chan string, 1),
 		manualPeers:         make(map[string]PeerInfo),
 		audioMode:           cfg.AudioMode,
 		audioTiming:         cfg.AudioTiming,
