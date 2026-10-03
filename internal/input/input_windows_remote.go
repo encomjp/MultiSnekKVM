@@ -30,30 +30,38 @@ var (
 )
 
 func (ih *InputHook) SetConnected(connected bool, sendFn func(protocol.Frame)) {
+	var stopCh, doneCh chan struct{}
 	ih.mu.Lock()
 	wasConnected := ih.connected
 	ih.connected = connected
 	ih.sendFn = sendFn
 	if connected && !wasConnected {
 		ih.triggerArmed = false
+		stopCh = make(chan struct{})
+		doneCh = make(chan struct{})
+		ih.edgeStopCh = stopCh
+		ih.edgeDoneCh = doneCh
 	}
 	ih.mu.Unlock()
 
 	if connected && !wasConnected {
 		globalHook.Store(ih)
-		ih.edgeStopCh = make(chan struct{})
-		ih.edgeDoneCh = make(chan struct{})
+		// The loop owns its channels: a previous loop that outlived a
+		// timed-out stop still observes its own (closed) stop channel and
+		// exits instead of picking up the new session's channels.
 		go func() {
-			defer close(ih.edgeDoneCh)
-			ih.edgeLoop()
+			defer close(doneCh)
+			ih.edgeLoop(stopCh)
 		}()
 		log.Println("edge monitoring started")
 	} else if !connected && wasConnected {
-		ih.mu.RLock()
+		ih.mu.Lock()
 		inRemote := ih.inRemoteMode
 		stopCh := ih.edgeStopCh
 		doneCh := ih.edgeDoneCh
-		ih.mu.RUnlock()
+		ih.edgeStopCh = nil
+		ih.edgeDoneCh = nil
+		ih.mu.Unlock()
 		if inRemote {
 			ih.requestExitRemote()
 		}
@@ -99,11 +107,16 @@ func (ih *InputHook) requestExitRemote() {
 
 const edgeDwellDuration = 50 * time.Millisecond
 
-func (ih *InputHook) edgeLoop() {
+// edgeMetricsRefreshInterval keeps edge-trigger bounds current when
+// displays are attached, removed or rearranged while connected.
+const edgeMetricsRefreshInterval = 2 * time.Second
+
+func (ih *InputHook) edgeLoop(stopCh <-chan struct{}) {
 	var edgeDwellStart time.Time
+	lastMetricsRefresh := time.Now()
 	for {
 		select {
-		case <-ih.edgeStopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -118,6 +131,10 @@ func (ih *InputHook) edgeLoop() {
 		}
 
 		if !inRemote {
+			if time.Since(lastMetricsRefresh) >= edgeMetricsRefreshInterval {
+				ih.refreshScreenMetrics()
+				lastMetricsRefresh = time.Now()
+			}
 			var pt point
 			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 			zoneActive, armed := ih.evaluateTriggerPoint(pt)
@@ -153,7 +170,7 @@ func (ih *InputHook) edgeLoop() {
 					}
 					for isLeftMouseButtonDown() {
 						select {
-						case <-ih.edgeStopCh:
+						case <-stopCh:
 							return
 						default:
 						}
@@ -226,7 +243,10 @@ func (ih *InputHook) runRemoteMode() {
 	ih.hookThreadID = uint32(tid)
 	ih.mu.Unlock()
 
-	pSetCursorPos.Call(uintptr(ih.centerX), uintptr(ih.centerY))
+	ih.mu.RLock()
+	cx, cy := ih.centerX, ih.centerY
+	ih.mu.RUnlock()
+	pSetCursorPos.Call(uintptr(cx), uintptr(cy))
 	ih.sendRemoteWake()
 
 	log.Println("remote mode active — mouse/keyboard forwarding to peer")
@@ -236,16 +256,10 @@ func (ih *InputHook) runRemoteMode() {
 	// active.  GetForegroundWindow() returns NULL from non-elevated processes
 	// while the Secure Desktop owns input.  Require 2 consecutive NULLs
 	// (~200 ms apart) to avoid false positives during normal window switches.
-	uacDone := make(chan struct{})
+	uacStop := make(chan struct{})
 	go func() {
-		defer close(uacDone)
 		nullCount := 0
 		for {
-			select {
-			case <-uacDone:
-				return
-			default:
-			}
 			ih.mu.RLock()
 			still := ih.inRemoteMode
 			ih.mu.RUnlock()
@@ -263,7 +277,11 @@ func (ih *InputHook) runRemoteMode() {
 			} else {
 				nullCount = 0
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-uacStop:
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
 		}
 	}()
 
@@ -288,14 +306,8 @@ func (ih *InputHook) runRemoteMode() {
 		}
 	}
 
-	// Signal the UAC monitor to stop and wait for it.
-	// uacDone is already closed when the goroutine returns naturally; close
-	// triggers it to stop if the message loop ended first.
-	select {
-	case <-uacDone:
-	default:
-		// goroutine may be sleeping; it will exit when it sees inRemoteMode==false
-	}
+	// Stop the UAC monitor so it cannot outlive this remote session.
+	close(uacStop)
 
 	if kbHook != 0 {
 		pUnhookWindowsHookEx.Call(kbHook)
@@ -396,6 +408,12 @@ func keyboardProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 	gh := globalHook.Load()
 	if nCode >= 0 && gh != nil && gh.IsInRemoteMode() {
 		kb := (*kbdLLHookStruct)(unsafe.Pointer(lParam))
+		if isInjectedKeyboardEvent(kb.Flags) {
+			// Synthetic input (SendInput from this or another process)
+			// is never forwarded; let it reach local applications.
+			ret, _, _ := pCallNextHookEx.Call(0, uintptr(nCode), wParam, lParam)
+			return ret
+		}
 
 		isKeyDown := wParam == wmKeyDown || wParam == wmSysKeyDown
 
@@ -481,6 +499,19 @@ func keyboardProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 	return ret
 }
 
+const (
+	llkhfInjected = 0x10 // KBDLLHOOKSTRUCT.flags LLKHF_INJECTED
+	llmhfInjected = 0x01 // MSLLHOOKSTRUCT.flags LLMHF_INJECTED
+)
+
+// isInjectedKeyboardEvent reports whether a low-level keyboard hook event
+// was synthesized (SendInput / keybd_event) rather than typed.
+func isInjectedKeyboardEvent(flags uint32) bool { return flags&llkhfInjected != 0 }
+
+// isInjectedMouseEvent reports whether a low-level mouse hook event was
+// synthesized rather than produced by a physical device.
+func isInjectedMouseEvent(flags uint32) bool { return flags&llmhfInjected != 0 }
+
 // asyncKeyDown returns true if the given VK code is currently pressed.
 func asyncKeyDown(vk uint32) bool {
 	r, _, _ := pGetAsyncKeyState.Call(uintptr(vk))
@@ -548,10 +579,16 @@ func mouseProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 	gh := globalHook.Load()
 	if nCode >= 0 && gh != nil && gh.IsInRemoteMode() {
 		ms := (*msLLHookStruct)(unsafe.Pointer(lParam))
+		if isInjectedMouseEvent(ms.Flags) {
+			// Synthetic input is never forwarded to the peer.
+			ret, _, _ := pCallNextHookEx.Call(0, uintptr(nCode), wParam, lParam)
+			return ret
+		}
 
 		gh.mu.RLock()
 		fn := gh.sendFn
 		sens := gh.sensitivity
+		centerX, centerY := gh.centerX, gh.centerY
 		gh.mu.RUnlock()
 		if fn == nil {
 			return 1
@@ -559,8 +596,8 @@ func mouseProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 
 		switch wParam {
 		case wmMouseMove:
-			dx := ms.Pt.X - gh.centerX
-			dy := ms.Pt.Y - gh.centerY
+			dx := ms.Pt.X - centerX
+			dy := ms.Pt.Y - centerY
 			if dx != 0 || dy != 0 {
 				sdx := int32(float64(dx) * sens)
 				sdy := int32(float64(dy) * sens)
@@ -577,7 +614,7 @@ func mouseProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 					}
 				}
 				fn(protocol.Frame{Type: protocol.MsgMouseMove, Payload: protocol.MouseMoveMsg{DX: sdx, DY: sdy}.Encode()})
-				pSetCursorPos.Call(uintptr(gh.centerX), uintptr(gh.centerY))
+				pSetCursorPos.Call(uintptr(centerX), uintptr(centerY))
 			}
 		case wmLButtonDown:
 			fn(protocol.Frame{Type: protocol.MsgMouseClick, Payload: protocol.MouseClickMsg{Button: 0, Pressed: true}.Encode()})
