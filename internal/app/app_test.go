@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -499,12 +500,52 @@ func TestConnectionInterfaceKind(t *testing.T) {
 		{"Thunderbolt Networking", "usb4"},
 		{"Bluetooth Network Connection", "bluetooth"},
 		{"Personal Area Network", "bluetooth"},
-		{"Ethernet 4", "network"},
-		{"Wi-Fi", "network"},
+		{"Ethernet 4", "ethernet"},
+		{"Wi-Fi", "wifi"},
 	}
 	for _, tc := range tests {
 		if got := connectionInterfaceKind(tc.name); got != tc.want {
 			t.Errorf("connectionInterfaceKind(%q) = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+
+func TestPeerConnectionCandidatesPreservesSelectedRoute(t *testing.T) {
+	peers := []discovery.DiscoveredPeer{
+		{DeviceID: "peer-1", Address: "169.254.11.2:24831", Addresses: []string{
+			"169.254.11.2:24831", "192.168.0.2:24831", "100.64.11.2:24831",
+		}},
+		{DeviceID: "peer-2", Address: "192.168.0.99:24831", Addresses: []string{
+			"192.168.0.99:24831",
+		}},
+	}
+	candidates := peerConnectionCandidates("192.168.0.2:24831", peers)
+	want := []string{"192.168.0.2:24831", "169.254.11.2:24831", "100.64.11.2:24831"}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("candidates = %v, want %v", candidates, want)
+	}
+	unknown := peerConnectionCandidates("192.168.0.200:24831", peers)
+	if !reflect.DeepEqual(unknown, []string{"192.168.0.200:24831"}) {
+		t.Fatalf("unknown endpoint must not borrow other peer routes: %v", unknown)
+	}
+}
+
+func TestReconnectCandidatesPrioritizesDirectUSB4(t *testing.T) {
+	cfg := Settings{LastPeerID: "peer-usb", LastPeerName: "Laptop", LastPeerAddr: map[string]string{
+		"wifi": "192.168.0.10:24831", "bluetooth": "192.168.137.1:24831",
+	}}
+	peers := []discovery.DiscoveredPeer{{DeviceID: "peer-usb",
+		Addresses: []string{"192.168.0.11:24831", "169.254.4.2:24831"},
+		AddressKinds: map[string]string{
+			"192.168.0.11:24831": "wifi",
+			"169.254.4.2:24831": "usb4",
+		},
+	}}
+	got, _ := reconnectCandidatesFor(cfg, peers)
+	want := []string{"169.254.4.2:24831", "192.168.0.11:24831",
+		"192.168.0.10:24831", "192.168.137.1:24831"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reconnect candidates = %v, want %v", got, want)
 	}
 }
