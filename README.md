@@ -120,6 +120,20 @@ Output: `build/bin/Multisnek.exe`
 
 Connections run over TLS 1.3 with device certificates and fingerprint pinning. Existing trusted peers reconnect without the PIN. For new pairing, **both devices must run a version supporting SPAKE2**; insecure legacy plaintext-PIN pairing is rejected. The current SPAKE2 dependency has not yet received an independent security audit, so security-sensitive deployments should review the pairing implementation before release.
 
+## 🔌 Direct USB4, Thunderbolt and Bluetooth connections
+
+MultiSnek's existing TCP/TLS transport can use **any functioning IP network adapter**. It does not need a separate raw USB or Bluetooth protocol. Open **Devices → Connect over USB4 / Thunderbolt or Bluetooth** to see your active local IP addresses and choose a peer's available connection address.
+
+- **USB4 / Thunderbolt:** On compatible Windows 11 PCs, connect with a suitable USB4/Thunderbolt cable. Windows can create an Ethernet-over-USB4 (USB4NET) adapter with an automatically assigned `169.254.x.x` address. Find each PC's address in the Devices guide or with `ipconfig`, and enter **the other PC's** address in MultiSnek. Use the per-peer address selector when both LAN/Tailscale and the direct link are present.
+- **Bluetooth PAN:** Pair the computers. If the host supports a Bluetooth hotspot/PAN service, enable it and join the PAN in Windows' Bluetooth device settings. Once each device has an IP-capable Bluetooth network connection, enter the peer's PAN address manually. This is a fallback for input/clipboard; Bluetooth bandwidth and latency can limit audio and file transfers.
+- **Other wired links:** Ordinary Ethernet or dedicated USB transfer/bridge hardware **only if its driver exposes a working IP adapter** can use the same manual-address workflow.
+
+An ordinary USB-C charging/data cable between two standard USB hosts **does not** create a PC-to-PC network. USB4/Thunderbolt interdomain networking requires compatible hardware, OS support and a suitable cable. A file-transfer-only USB bridge cable is not automatically compatible.
+
+**Troubleshooting:** Confirm the adapter is up on both PCs, test reachability to the peer's IP, allow MultiSnek's TCP port `24831` through Windows Firewall on the new network, and use the actual peer IP rather than the hostname if Windows selects Wi-Fi instead of the direct link. Standard LAN discovery uses IPv4 broadcasts; if discovery is blocked, add the peer IP manually. This feature does not install network drivers or automatically establish a Bluetooth PAN.
+
+References: [Microsoft USB4 interdomain networking](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/usb4-interdomain-connections) · [Microsoft Bluetooth PAN setup](https://support.microsoft.com/en-us/windows/hardware/bluetooth/connect-to-a-bluetooth-network-in-windows)
+
 ## ⚙️ Requirements
 
 - **Windows 10/11** (primary platform)
