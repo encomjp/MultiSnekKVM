@@ -223,6 +223,7 @@ type App struct {
 	lastPeerAddr            string
 	autoReconnect           bool
 	reconnecting            bool
+	suspended               bool // between OS suspend and resume; suppresses auto-reconnect
 	lastConnectTime         time.Time
 	tray                    *TrayManager
 	quitRequested           bool

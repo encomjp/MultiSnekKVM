@@ -144,9 +144,14 @@ func (a *App) reconnectLoop(ctx context.Context, expectedAddr string) {
 		a.mu.RLock()
 		current := a.lastPeerAddr
 		reconnectEnabled := a.autoReconnect
+		suspended := a.suspended
 		a.mu.RUnlock()
 		if !reconnectEnabled {
 			log.Printf("auto-reconnect: cancelled (disabled)")
+			return
+		}
+		if suspended {
+			log.Printf("auto-reconnect: cancelled (system suspending; resume reconnects)")
 			return
 		}
 		if current != expectedAddr {

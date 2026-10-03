@@ -152,13 +152,14 @@ func (a *App) Startup(ctx context.Context) {
 			case <-a.ctx.Done():
 			}
 			return
-		// File chunks can be dropped under pressure — the transfer will fail with a
-		// protocol error and can be retried, which is safer than silently corrupting it.
+		// File chunks block too: a dropped chunk always aborts the transfer.
+		// Blocking the read loop here lets TCP backpressure throttle the
+		// sender (whose file lane is lowest priority) while the disk catches
+		// up; the queue is sized so this only happens under sustained load.
 		case MsgFileChunk:
 			select {
 			case a.fileInboundCh <- f:
-			default:
-				log.Printf("inbound-file: chunk queue full, dropping chunk (transfer will fail)")
+			case <-a.ctx.Done():
 			}
 			return
 		case MsgAudioData, MsgMicData:
@@ -194,6 +195,7 @@ func (a *App) Startup(ctx context.Context) {
 		a.jitterMs = -1
 		a.lastConnectTime = time.Now()
 		a.sessionRole = role
+		a.suspended = false // a live session proves we are awake
 		a.mu.Unlock()
 		a.saveLastPeer(peerID, peerName)
 		a.emitSessionUpdated()
@@ -230,7 +232,8 @@ func (a *App) Startup(ctx context.Context) {
 		a.jitterMs = -1
 		a.sessionRole = ""
 		peerAddr := a.lastPeerAddr
-		reconnect := a.autoReconnect
+		// Going to sleep: resume triggers a single reconnect instead.
+		reconnect := a.autoReconnect && !a.suspended
 		alreadyReconnecting := a.reconnecting
 		connDuration := time.Since(a.lastConnectTime)
 		a.mu.Unlock()
@@ -351,16 +354,21 @@ func (a *App) Startup(ctx context.Context) {
 		switch event {
 		case "suspend":
 			log.Println("system suspending — releasing input and disconnecting")
+			// Suppress auto-reconnect while the machine goes to sleep.
+			a.mu.Lock()
+			a.suspended = true
+			a.mu.Unlock()
 			a.releaseInjectedRemoteKeys()
 			if a.transport != nil && a.transport.GetSession() != nil {
 				a.transport.Disconnect()
 			}
 		case "resume":
 			log.Println("system resumed — triggering reconnect")
-			a.mu.RLock()
+			a.mu.Lock()
+			a.suspended = false
 			peerAddr := a.lastPeerAddr
 			reconnect := a.autoReconnect
-			a.mu.RUnlock()
+			a.mu.Unlock()
 			if reconnect && peerAddr != "" {
 				SafeGo("power-resume-reconnect", func() {
 					a.reconnectLoop(a.ctx, peerAddr)
