@@ -124,9 +124,7 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.fileTx = NewFileTransferManager()
 	a.fileTx.SetOnComplete(func(tempDir string, names []string) {
-		a.mu.Lock()
-		a.pendingRecvDirs = append(a.pendingRecvDirs, tempDir)
-		a.mu.Unlock()
+		a.addRecvDir(tempDir)
 		wailsRuntime.EventsEmit(a.ctx, "file-received", map[string]interface{}{
 			"count":   len(names),
 			"names":   names,

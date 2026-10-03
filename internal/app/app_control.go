@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"multisnekkvm/internal/input"
 )
 
 func (a *App) GetEdgeSide() string {
@@ -21,8 +22,16 @@ func (a *App) SetEdgeSide(side string) {
 	if a.inputHook == nil {
 		return
 	}
-	a.inputHook.SetEdgeSide(side)
-	a.settings.Update(func(s *Settings) { s.EdgeSide = side })
+	normalized := input.NormalizeEdgeSide(side)
+	if normalized == "" {
+		log.Printf("SetEdgeSide: ignoring invalid edge side %q", side)
+		return
+	}
+	a.inputHook.SetEdgeSide(normalized)
+	if a.inputHook.GetEdgeSide() != normalized {
+		return // rejected by the input hook; keep the persisted value
+	}
+	a.settings.Update(func(s *Settings) { s.EdgeSide = normalized })
 	a.sendEdgeConfig()
 }
 
@@ -38,6 +47,10 @@ func (a *App) SetSensitivity(s float64) {
 		return
 	}
 	a.inputHook.SetSensitivity(s)
+	if a.inputHook.GetSensitivity() != s {
+		log.Printf("SetSensitivity: ignoring out-of-range value %v", s)
+		return // rejected by the input hook; keep the persisted value
+	}
 	a.settings.Update(func(cfg *Settings) { cfg.Sensitivity = s })
 }
 
@@ -236,6 +249,13 @@ type SaveReceivedFilesResult struct {
 // SaveReceivedFiles opens a folder picker, then copies files from tempDir to the chosen folder.
 // The clipboard is updated to point at the new locations. Returns an error string on failure.
 func (a *App) SaveReceivedFiles(tempDir string) (SaveReceivedFilesResult, error) {
+	// Only directories created by a completed inbound transfer may be
+	// touched; the path comes from the frontend and is removed afterwards.
+	tempDir, ok := a.lookupRecvDir(tempDir)
+	if !ok {
+		return SaveReceivedFilesResult{}, fmt.Errorf("unknown received-files directory")
+	}
+
 	dest, err := wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Save received files to…",
 	})
@@ -258,8 +278,8 @@ func (a *App) SaveReceivedFiles(tempDir string) (SaveReceivedFilesResult, error)
 		if err != nil {
 			return SaveReceivedFilesResult{}, err
 		}
-		if err := copyFile(src, dst); err != nil {
-			return SaveReceivedFilesResult{}, fmt.Errorf("copy %s: %w", e.Name(), err)
+		if err := moveFile(src, dst); err != nil {
+			return SaveReceivedFilesResult{}, fmt.Errorf("save %s: %w", e.Name(), err)
 		}
 		saved = append(saved, dst)
 	}
@@ -269,8 +289,8 @@ func (a *App) SaveReceivedFiles(tempDir string) (SaveReceivedFilesResult, error)
 	}
 
 	// Clean up the temp directory now that files are safely in destination.
-	_ = os.RemoveAll(tempDir)
 	a.removeRecvDir(tempDir)
+	_ = os.RemoveAll(tempDir)
 
 	return SaveReceivedFilesResult{Saved: saved, Dest: dest}, nil
 }
@@ -278,7 +298,9 @@ func (a *App) SaveReceivedFiles(tempDir string) (SaveReceivedFilesResult, error)
 // DiscardReceivedFiles removes a received-files temp directory without saving.
 // Called when the user dismisses a file transfer toast.
 func (a *App) DiscardReceivedFiles(tempDir string) {
-	if tempDir == "" {
+	tempDir, ok := a.lookupRecvDir(tempDir)
+	if !ok {
+		log.Printf("discard received files: ignoring unknown directory")
 		return
 	}
 	a.removeRecvDir(tempDir)
@@ -287,12 +309,37 @@ func (a *App) DiscardReceivedFiles(tempDir string) {
 	}
 }
 
+// addRecvDir registers a temp directory produced by a completed transfer.
+func (a *App) addRecvDir(tempDir string) {
+	a.mu.Lock()
+	a.pendingRecvDirs = append(a.pendingRecvDirs, filepath.Clean(tempDir))
+	a.mu.Unlock()
+}
+
+// lookupRecvDir returns the registered directory matching tempDir exactly
+// (after filepath.Clean). Anything else is rejected.
+func (a *App) lookupRecvDir(tempDir string) (string, bool) {
+	if tempDir == "" {
+		return "", false
+	}
+	cleaned := filepath.Clean(tempDir)
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for _, d := range a.pendingRecvDirs {
+		if d == cleaned {
+			return d, true
+		}
+	}
+	return "", false
+}
+
 // removeRecvDir removes tempDir from the pending tracking list.
 func (a *App) removeRecvDir(tempDir string) {
+	cleaned := filepath.Clean(tempDir)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for i, d := range a.pendingRecvDirs {
-		if d == tempDir {
+		if d == cleaned {
 			a.pendingRecvDirs = append(a.pendingRecvDirs[:i], a.pendingRecvDirs[i+1:]...)
 			return
 		}
@@ -315,6 +362,19 @@ func uniqueDest(dir, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("too many copies of %q in destination", name)
+}
+
+// moveFile renames src to dst, falling back to copy+delete when a rename
+// is not possible (e.g. across volumes).
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	_ = os.Remove(src)
+	return nil
 }
 
 func copyFile(src, dst string) (retErr error) {
