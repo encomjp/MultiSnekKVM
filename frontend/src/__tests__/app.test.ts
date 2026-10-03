@@ -49,7 +49,7 @@ describe('App shell (preview mode)', () => {
     await goTo(/^Devices/);
     expect(screen.getByRole('heading', { level: 1, name: 'Devices' })).toBeInTheDocument();
     expect(nav().getByRole('button', { name: /^Devices/ })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByText('Studio PC')).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: 'Studio PC' })).toBeInTheDocument();
 
     await goTo(/^Settings/);
     expect(screen.getByRole('heading', { level: 1, name: 'Input & screens' })).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe('Devices', () => {
     await fireEvent.click(manual);
     expect(manual).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Gaming Rig')).toBeInTheDocument();
-    expect(screen.queryByText('Studio PC')).not.toBeInTheDocument();
+    expect(screen.queryByRole('listitem', { name: 'Studio PC' })).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Gaming Rig' }));
     expect(remove).toHaveBeenCalledWith('192.168.0.88:24831');

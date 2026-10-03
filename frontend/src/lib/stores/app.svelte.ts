@@ -5,6 +5,7 @@ import { getContext, setContext } from 'svelte';
 import type { Api, Peer, Unsubscribe } from '../api/types';
 import { pluralize } from '../utils';
 import { ActivityStore } from './activity.svelte';
+import { BluetoothStore } from './bluetooth.svelte';
 import { ConnectionStore } from './connection.svelte';
 import { HealthStore } from './health.svelte';
 import { SettingsStore } from './settings.svelte';
@@ -35,6 +36,7 @@ export class AppState {
   readonly connection: ConnectionStore;
   readonly settings: SettingsStore;
   readonly health: HealthStore;
+  readonly bluetooth: BluetoothStore;
 
   screen = $state<Screen>('session');
   settingsSection = $state<SettingsSection>('input');
@@ -48,6 +50,7 @@ export class AppState {
     this.activity = new ActivityStore(api, this.toasts);
     this.connection = new ConnectionStore(api, this.toasts, this.activity);
     this.health = new HealthStore(api);
+    this.bluetooth = new BluetoothStore(api, (message) => this.toasts.error(message));
     this.settings = new SettingsStore(api, (_key, label, message) => {
       this.toasts.error(`Couldn't save the ${label}: ${message}`);
     });
@@ -60,7 +63,7 @@ export class AppState {
   async start(): Promise<void> {
     this.theme.start();
     this.#subscribe();
-    await Promise.all([this.connection.load(), this.settings.load(), this.health.load()]);
+    await Promise.all([this.connection.load(), this.settings.load(), this.health.load(), this.bluetooth.load()]);
     this.ready = true;
   }
 
@@ -91,12 +94,13 @@ export class AppState {
   }
 
   #subscribe(): void {
-    const { api, connection, health, activity, toasts } = this;
+    const { api, connection, health, activity, toasts, bluetooth } = this;
     this.#unsubscribe.push(
       api.on('device-updated', (device) => (connection.device = device)),
       api.on('peers-updated', (peers) => (connection.peers = peers)),
       api.on('session-updated', (session) => connection.applySession(session)),
       api.on('tailscale-updated', (status) => (connection.tailscale = status)),
+      api.on('bluetooth-updated', (status) => bluetooth.apply(status)),
       api.on('health-updated', (status) => (health.status = status)),
       api.on('health-alert', (alert) => {
         health.addAlert(alert);
