@@ -135,7 +135,7 @@ func (a *App) touchRemoteKeyWatchdog() {
 	atomic.StoreInt64(&a.lastRemoteInputNs, time.Now().UnixNano())
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.remoteKeyState.HasPressed() {
+	if !a.remoteKeyState.HasPressed() && !anyRemoteMouseButtonHeld(a.remoteMouseButtons) {
 		a.remoteKeyDeadline = time.Time{}
 		if a.remoteKeyTimer != nil {
 			a.remoteKeyTimer.Stop()
@@ -160,7 +160,7 @@ func anyRemoteMouseButtonHeld(buttons [3]bool) bool {
 func (a *App) handleRemoteKeyWatchdog() {
 	a.mu.Lock()
 	deadline := a.remoteKeyDeadline
-	hasPressed := a.remoteKeyState.HasPressed()
+	hasPressed := a.remoteKeyState.HasPressed() || anyRemoteMouseButtonHeld(a.remoteMouseButtons)
 	if !hasPressed || deadline.IsZero() {
 		a.mu.Unlock()
 		return
