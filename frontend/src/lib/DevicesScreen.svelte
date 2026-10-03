@@ -31,6 +31,9 @@
 
   function interfaceLabel(kind: NetworkInterface['kind']): string {
     if (kind === 'usb4') return 'USB4 / Thunderbolt';
+    if (kind === 'usb-bridge') return 'USB network bridge';
+    if (kind === 'ethernet') return 'Ethernet';
+    if (kind === 'wifi') return 'Wi-Fi';
     if (kind === 'bluetooth') return 'Bluetooth PAN';
     return 'Network adapter';
   }
@@ -122,7 +125,7 @@
             </div>
             <p class="device-address mono selectable">{addressForPeer(peer, selectedPeerAddresses) || '—'}</p>
             {#if (peer.addresses || []).length > 1}
-              <label class="route-picker-label" for="route-{peer.id}">Connection address</label>
+              <label class="route-picker-label" for="route-{peer.id}">Connection address · best available selected automatically</label>
               <select
                 class="input route-picker mono"
                 id="route-{peer.id}"
@@ -132,7 +135,7 @@
                 disabled={sessionConnected || !!connectingAddress}
               >
                 {#each peer.addresses || [] as address}
-                  <option value={address}>{address} · {endpointLabel(address)}</option>
+                  <option value={address}>{address} · {routeLabel(peer.addressKinds?.[address] || endpointLabel(address))}{address === peer.address ? ' · recommended' : ''}</option>
                 {/each}
               </select>
             {/if}
