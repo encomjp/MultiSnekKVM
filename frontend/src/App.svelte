@@ -6,7 +6,7 @@
   import DevicesScreen from './lib/DevicesScreen.svelte';
   import OverviewScreen from './lib/OverviewScreen.svelte';
   import SettingsScreen from './lib/SettingsScreen.svelte';
-  import { formatLatency, healthSummary, normalizeTailscale, preferredRouteLabel } from './lib/utils';
+  import { formatLatency, healthSummary, normalizeTailscale, preferredRouteLabel, routeLabel } from './lib/utils';
   import type { AudioDevice, DeviceInfo, HealthStatus, LastPeerInfo, MonitorInfo, NetworkInterface, Peer, Session, TailscaleStatus } from './lib/types';
 
   type PrimaryTab = 'overview' | 'devices' | 'settings';
@@ -106,7 +106,7 @@
   $: isConnected = session.connected;
   $: sessionStatusText = !isConnected ? 'Not Connected' : session.controlling ? 'Controlling Remote Computer' : session.role === 'controlled' ? 'Being Controlled' : 'Connected';
   $: sessionStatusSubtext = !isConnected ? (lastPeer?.name ? `Last connected to ${lastPeer.name}` : 'Ready to connect') : session.controlling ? `You have control of ${session.peerName}` : session.role === 'controlled' ? `${session.peerName} has control` : `Connected to ${session.peerName}`;
-  $: activeRouteLabel = activePeer ? preferredRouteLabel(activePeer.preferredRoute) : 'Standby';
+  $: activeRouteLabel = session.connected && session.route ? routeLabel(session.route) : activePeer ? preferredRouteLabel(activePeer.preferredRoute) : 'Standby';
   $: latencyTone = session.latencyMs > 0 && session.latencyMs < 10 ? 'good' : session.latencyMs >= 10 && session.latencyMs < 50 ? 'ok' : 'idle';
   $: remoteAudioSummary = audioMode === 'remote' ? 'Listening to remote audio' : audioMode === 'local' ? 'Sending this computer audio' : 'Audio off';
   $: micSummary = micMode === 'send' ? 'Sharing microphone' : micMode === 'receive' ? 'Monitoring remote microphone' : 'Microphone off';
