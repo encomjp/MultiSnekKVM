@@ -1,0 +1,64 @@
+name: PR validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-opus
+            mingw-w64-x86_64-opusfile
+            mingw-w64-x86_64-libogg
+      - name: Resolve and verify Go dependencies
+        shell: pwsh
+        run: |
+          go mod tidy
+          Write-Host "--- New PAKE dependency checksums ---"
+          Get-Content go.sum | Where-Object { $_ -match 'backkem/spake2-go|dedis.ch/(kyber|fixbuf)' }
+          Write-Host "--- go.mod changes from tidy ---"
+          git diff -- go.mod
+      - name: Backend tests
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
+          go test ./internal/...
+      - name: Targeted race tests
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
+          go test -race ./internal/transport ./internal/audio
+      - name: Frontend tests
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
