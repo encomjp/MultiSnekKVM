@@ -163,7 +163,8 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 		return fmt.Errorf("load cert: %w", err)
 	}
 
-	conn, err := tls.Dial("tcp", address, &tls.Config{
+	dialer := &net.Dialer{Timeout: handshakeTimeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
