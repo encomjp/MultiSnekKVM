@@ -57,7 +57,7 @@ export function orderedRoutes(routes = []) {
 export function endpointLabel(address) {
   const host = address.startsWith('[')
     ? address.slice(1, address.indexOf(']'))
-    : address.replace(/:\\d+$/, '');
+    : address.replace(/:\d+$/, '');
   const parts = host.split('.').map(Number);
   if (parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
     if (parts[0] === 169 && parts[1] === 254) return 'Direct link';
