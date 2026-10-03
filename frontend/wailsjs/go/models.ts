@@ -1,10 +1,29 @@
 export namespace app {
 	
+	export class ConnectionInterface {
+	    name: string;
+	    description?: string;
+	    kind: string;
+	    addresses: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ConnectionInterface(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.kind = source["kind"];
+	        this.addresses = source["addresses"];
+	    }
+	}
 	export class PeerInfo {
 	    id: string;
 	    name: string;
 	    address: string;
 	    addresses: string[];
+	    addressKinds?: Record<string, string>;
 	    fingerprint: string;
 	    source: string;
 	    routes: string[];
@@ -23,6 +42,7 @@ export namespace app {
 	        this.name = source["name"];
 	        this.address = source["address"];
 	        this.addresses = source["addresses"];
+	        this.addressKinds = source["addressKinds"];
 	        this.fingerprint = source["fingerprint"];
 	        this.source = source["source"];
 	        this.routes = source["routes"];
@@ -47,6 +67,8 @@ export namespace app {
 	    }
 	}
 	export class SessionStatus {
+	    route?: string;
+	    remoteAddress?: string;
 	    connected: boolean;
 	    controlling: boolean;
 	    peerName: string;
@@ -62,6 +84,8 @@ export namespace app {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.route = source["route"];
+	        this.remoteAddress = source["remoteAddress"];
 	        this.connected = source["connected"];
 	        this.controlling = source["controlling"];
 	        this.peerName = source["peerName"];

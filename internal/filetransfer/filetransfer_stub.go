@@ -22,4 +22,3 @@ func (ft *FileTransferManager) SetSendFn(_ func(protocol.Frame)) {}
 func (ft *FileTransferManager) StartSend(_ []string)             {}
 func (ft *FileTransferManager) HandleInbound(_ protocol.Frame)   {}
 func (ft *FileTransferManager) CancelAll()                       {}
-func CaptureActiveDrag() []string                                { return nil }

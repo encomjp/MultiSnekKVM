@@ -18,14 +18,26 @@ func (t *Transport) exchangeHelloOutbound(conn *tls.Conn, pairingCode string) (p
 		return protocol.HelloMsg{}, "", err
 	}
 
+	// Never send the low-entropy PIN inside an unauthenticated TLS session.
+	// The version marker tells the host to run a certificate-bound PAKE first.
+	pin := normalizePairingCode(pairingCode)
+	marker := ""
+	if pin != "" {
+		marker = pairingProtocolMarker
+	}
 	hello := protocol.HelloMsg{
 		DeviceID:    t.device.ID,
 		Name:        t.device.Name,
 		Fingerprint: t.device.Fingerprint,
-		PairingCode: normalizePairingCode(pairingCode),
+		PairingCode: marker,
 	}
 	if err := protocol.WriteFrame(conn, protocol.Frame{Type: protocol.MsgHello, Payload: hello.Encode()}); err != nil {
 		return protocol.HelloMsg{}, "", fmt.Errorf("send hello: %w", err)
+	}
+	if pin != "" {
+		if err := t.runPairingOutbound(conn, pin, t.device.Fingerprint, peerFingerprint); err != nil {
+			return protocol.HelloMsg{}, "", err
+		}
 	}
 
 	peerHello, err := t.readPeerHello(conn, peerCert)
@@ -58,6 +70,18 @@ func (t *Transport) exchangeHelloInbound(conn *tls.Conn) (protocol.HelloMsg, str
 	peerHello, err := t.readPeerHello(conn, peerCert)
 	if err != nil {
 		return protocol.HelloMsg{}, "", err
+	}
+	if peerHello.PairingCode != "" {
+		if peerHello.PairingCode != pairingProtocolMarker {
+			return protocol.HelloMsg{}, "", fmt.Errorf("insecure legacy pairing is not supported; update both devices")
+		}
+		pin, err := t.runPairingInbound(conn, peerFingerprint, t.device.Fingerprint)
+		if err != nil {
+			return protocol.HelloMsg{}, "", err
+		}
+		// Only pass the locally verified PIN to the existing persistence and
+		// rotation logic. This value was never transmitted on the wire.
+		peerHello.PairingCode = pin
 	}
 	if err := t.authorizeInboundPeer(peerHello, peerFingerprint, conn.RemoteAddr().String()); err != nil {
 		return protocol.HelloMsg{}, "", err
@@ -92,7 +116,7 @@ func (t *Transport) beginHelloExchange(conn *tls.Conn) (*x509.Certificate, strin
 }
 
 func (t *Transport) readPeerHello(conn *tls.Conn, peerCert *x509.Certificate) (protocol.HelloMsg, error) {
-	frame, err := protocol.ReadFrame(conn)
+	frame, err := protocol.ReadFrameLimit(conn, protocol.MaxHandshakePayloadBytes)
 	if err != nil {
 		return protocol.HelloMsg{}, fmt.Errorf("read hello: %w", err)
 	}
@@ -150,7 +174,8 @@ func validatePeerHello(hello protocol.HelloMsg, peerCert *x509.Certificate) erro
 	return nil
 }
 
-func shortPeerID(id string) string {
+// ShortPeerID abbreviates a device ID or fingerprint for logs.
+func ShortPeerID(id string) string {
 	if len(id) <= 12 {
 		return id
 	}

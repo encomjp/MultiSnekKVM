@@ -88,7 +88,7 @@ func (t *Transport) authorizeInboundPeer(peerHello protocol.HelloMsg, peerFinger
 
 func (t *Transport) authorizeOutboundPeer(peerHello protocol.HelloMsg, peerFingerprint, endpoint string, pairingCode string) error {
 	if t.trust == nil {
-		return nil
+		return fmt.Errorf("trust store unavailable")
 	}
 	record, ok := t.trust.GetByDeviceID(peerHello.DeviceID)
 	if ok {
@@ -160,7 +160,8 @@ func (t *Transport) recordPairingFailureLocked(now time.Time) {
 	}
 }
 
-func generateRandomPairingCode() string {
+// GeneratePairingCode returns a random 6-digit pairing PIN.
+func GeneratePairingCode() string {
 	value, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
 		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)

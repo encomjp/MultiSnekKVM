@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (a *App) Startup(ctx context.Context) {
+func (a *App) startup(ctx context.Context) {
 	logutil.LogKV("app.startup.begin",
 		"requested_name", a.device.Name,
 		"port", a.device.Port,
@@ -25,7 +26,6 @@ func (a *App) Startup(ctx context.Context) {
 	)
 
 	a.ctx, a.cancel = context.WithCancel(ctx)
-	a.initRealtimeAudioQueue()
 	a.initSendMux()
 	a.initInboundDispatch()
 
@@ -85,11 +85,8 @@ func (a *App) Startup(ctx context.Context) {
 		}
 	}
 	a.inputHook.SetOnStateChange(func() {
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+		a.emitSessionUpdated()
 		a.handleControlStateChange()
-	})
-	a.inputHook.SetOnEdgeDrag(func() {
-		a.handleEdgeDrag()
 	})
 
 	audioStreamer, err := NewAudioStreamer()
@@ -123,9 +120,7 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.fileTx = NewFileTransferManager()
 	a.fileTx.SetOnComplete(func(tempDir string, names []string) {
-		a.mu.Lock()
-		a.pendingRecvDirs = append(a.pendingRecvDirs, tempDir)
-		a.mu.Unlock()
+		a.addRecvDir(tempDir)
 		wailsRuntime.EventsEmit(a.ctx, "file-received", map[string]interface{}{
 			"count":   len(names),
 			"names":   names,
@@ -134,6 +129,8 @@ func (a *App) Startup(ctx context.Context) {
 	})
 
 	a.transport = NewTransport(a.device, identity, trustStore)
+	// Mux goroutines read a.transport; start them only once it is set.
+	a.startSendMux()
 	a.transport.OnFrame = func(f Frame) {
 		// File-transfer and audio frames are dispatched to dedicated goroutines to
 		// prevent disk I/O and WASAPI decode from blocking the readLoop goroutine.
@@ -149,20 +146,31 @@ func (a *App) Startup(ctx context.Context) {
 			case <-a.ctx.Done():
 			}
 			return
-		// File chunks can be dropped under pressure — the transfer will fail with a
-		// protocol error and can be retried, which is safer than silently corrupting it.
+		// File chunks block too: a dropped chunk always aborts the transfer.
+		// Blocking the read loop here lets TCP backpressure throttle the
+		// sender (whose file lane is lowest priority) while the disk catches
+		// up; the queue is sized so this only happens under sustained load.
 		case MsgFileChunk:
 			select {
 			case a.fileInboundCh <- f:
-			default:
-				log.Printf("inbound-file: chunk queue full, dropping chunk (transfer will fail)")
+			case <-a.ctx.Done():
 			}
 			return
+		// Audio transport/format/data share one ordered queue so a format
+		// change can never overtake the data that precedes it. Data may be
+		// dropped under pressure (the jitter buffer conceals it); control
+		// frames must not be.
 		case MsgAudioData, MsgMicData:
 			select {
 			case a.audioInboundCh <- f:
 			default:
-				log.Printf("inbound-audio: queue full, dropping audio frame type=0x%02x", f.Type)
+				atomic.AddUint64(&a.audioInboundDroppedN, 1)
+			}
+			return
+		case MsgAudioTransport, MsgAudioFormat, MsgMicTransport, MsgMicFormat:
+			select {
+			case a.audioInboundCh <- f:
+			case <-a.ctx.Done():
 			}
 			return
 		}
@@ -176,8 +184,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.transport.OnConnect = func(peerID, peerName, role string) {
 		a.drainSendMux()
 		a.drainInboundChannels()
-		a.bumpRealtimeSendGeneration()
-		a.resetAudioPipelines()
+		a.resetAudioStreams()
 		a.sendEdgeConfig()
 		if role == "controller" {
 			a.inputHook.SetConnected(true, func(f Frame) {
@@ -191,9 +198,10 @@ func (a *App) Startup(ctx context.Context) {
 		a.jitterMs = -1
 		a.lastConnectTime = time.Now()
 		a.sessionRole = role
+		a.suspended = false // a live session proves we are awake
 		a.mu.Unlock()
 		a.saveLastPeer(peerID, peerName)
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+		a.emitSessionUpdated()
 		if role == "controller" {
 			a.mu.RLock()
 			mode := a.audioMode
@@ -207,15 +215,14 @@ func (a *App) Startup(ctx context.Context) {
 				a.startMicForMode(mic)
 			}
 		}
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitPeersUpdated()
 	}
 	a.transport.OnDisconnect = func() {
 		a.drainSendMux()
 		a.drainInboundChannels()
-		a.bumpRealtimeSendGeneration()
 		a.stopAllAudio()
 		a.stopAllMic()
-		a.resetAudioPipelines()
+		a.resetAudioStreams()
 		a.inputHook.SetConnected(false, nil)
 		a.resetControlledState()
 		a.fileTx.CancelAll()
@@ -227,12 +234,13 @@ func (a *App) Startup(ctx context.Context) {
 		a.jitterMs = -1
 		a.sessionRole = ""
 		peerAddr := a.lastPeerAddr
-		reconnect := a.autoReconnect
+		// Going to sleep: resume triggers a single reconnect instead.
+		reconnect := a.autoReconnect && !a.suspended
 		alreadyReconnecting := a.reconnecting
 		connDuration := time.Since(a.lastConnectTime)
 		a.mu.Unlock()
-		wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitSessionUpdated()
+		a.emitPeersUpdated()
 		if reconnect && peerAddr != "" && !alreadyReconnecting {
 			if connDuration < 3*time.Second {
 				log.Printf("auto-reconnect: skipped — connection lasted %v (likely rejected by peer)", connDuration)
@@ -270,7 +278,7 @@ func (a *App) Startup(ctx context.Context) {
 		if a.discovery == nil {
 			return false, "not initialized"
 		}
-		count := len(a.discovery.Peers())
+		count := a.discovery.PeerCount()
 		return true, fmt.Sprintf("%d peers", count)
 	})
 	a.health.Register("tailscale", func() (bool, string) {
@@ -287,7 +295,7 @@ func (a *App) Startup(ctx context.Context) {
 		return true, st.BackendState
 	})
 	a.health.Register("send-mux", func() (bool, string) {
-		queuedAny := len(a.muxHigh) > 0 || len(a.muxMouse) > 0 || len(a.muxFile) > 0
+		queuedAny := len(a.muxHigh) > 0 || len(a.muxMouse) > 0 || len(a.muxFile) > 0 || a.muxAudio.len() > 0
 		if !queuedAny {
 			return true, "idle"
 		}
@@ -297,14 +305,26 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		idleMs := time.Since(time.Unix(0, lastNs)).Milliseconds()
 		if idleMs >= 1000 {
-			return false, fmt.Sprintf("stalled %dms (H:%d M:%d F:%d)", idleMs, len(a.muxHigh), len(a.muxMouse), len(a.muxFile))
+			return false, fmt.Sprintf("stalled %dms (H:%d M:%d A:%d F:%d)", idleMs, len(a.muxHigh), len(a.muxMouse), a.muxAudio.len(), len(a.muxFile))
 		}
-		return true, fmt.Sprintf("active H:%d M:%d F:%d", len(a.muxHigh), len(a.muxMouse), len(a.muxFile))
+		return true, fmt.Sprintf("active H:%d M:%d A:%d F:%d", len(a.muxHigh), len(a.muxMouse), a.muxAudio.len(), len(a.muxFile))
 	})
+	// ReadMemStats stops the world; sample it at most once a minute even
+	// though health checks run every few seconds. The check can run
+	// concurrently (health loop and GetHealthStatus), hence the mutex.
+	var memMu sync.Mutex
+	var memSampledAt time.Time
+	var memHeapMB uint64
 	a.health.Register("memory", func() (bool, string) {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		heapMB := m.HeapAlloc / 1024 / 1024
+		memMu.Lock()
+		if memSampledAt.IsZero() || time.Since(memSampledAt) >= time.Minute {
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			memHeapMB = m.HeapAlloc / 1024 / 1024
+			memSampledAt = time.Now()
+		}
+		heapMB := memHeapMB
+		memMu.Unlock()
 		if heapMB > 512 {
 			return false, fmt.Sprintf("heap %dMB (high — consider restarting)", heapMB)
 		}
@@ -315,6 +335,8 @@ func (a *App) Startup(ctx context.Context) {
 	SafeGoRestart(a.ctx, "discovery", func(ctx context.Context) { a.discovery.Run(ctx) })
 	SafeGoRestart(a.ctx, "emit-updates", func(ctx context.Context) { a.emitUpdates() })
 	SafeGoRestart(a.ctx, "clipboard-sync", func(ctx context.Context) { a.clipboardSync() })
+	SafeGoRestart(a.ctx, "clipboard-writer", a.clipboardWriter)
+	SafeGoRestart(a.ctx, "session-update", func(ctx context.Context) { a.sessionUpdateLoop() })
 	SafeGoRestart(a.ctx, "latency-loop", func(ctx context.Context) { a.latencyLoop() })
 	SafeGoRestart(a.ctx, "secure-desktop-monitor", func(ctx context.Context) { a.secureDesktopMonitor(ctx) })
 	SafeGoRestart(a.ctx, "controlled-mode-watchdog", func(ctx context.Context) { a.controlledModeWatchdog(ctx) })
@@ -334,16 +356,21 @@ func (a *App) Startup(ctx context.Context) {
 		switch event {
 		case "suspend":
 			log.Println("system suspending — releasing input and disconnecting")
+			// Suppress auto-reconnect while the machine goes to sleep.
+			a.mu.Lock()
+			a.suspended = true
+			a.mu.Unlock()
 			a.releaseInjectedRemoteKeys()
 			if a.transport != nil && a.transport.GetSession() != nil {
 				a.transport.Disconnect()
 			}
 		case "resume":
 			log.Println("system resumed — triggering reconnect")
-			a.mu.RLock()
+			a.mu.Lock()
+			a.suspended = false
 			peerAddr := a.lastPeerAddr
 			reconnect := a.autoReconnect
-			a.mu.RUnlock()
+			a.mu.Unlock()
 			if reconnect && peerAddr != "" {
 				SafeGo("power-resume-reconnect", func() {
 					a.reconnectLoop(a.ctx, peerAddr)

@@ -2,72 +2,76 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"multisnekkvm/internal/discovery"
-
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"multisnekkvm/internal/link"
+	"multisnekkvm/internal/transport"
 )
 
+// reconnectCandidatesFor retains fresh addresses ahead of saved addresses
+// within each route, and tries reliable direct links before slower fallbacks.
 func reconnectCandidatesFor(cfg Settings, peers []discovery.DiscoveredPeer) ([]string, string) {
 	if cfg.LastPeerID == "" {
 		return nil, ""
 	}
-
-	appendUnique := func(candidates []string, seen map[string]struct{}, addr string) []string {
-		if addr == "" {
-			return candidates
-		}
-		if _, ok := seen[addr]; ok {
-			return candidates
-		}
-		seen[addr] = struct{}{}
-		return append(candidates, addr)
+	type candidate struct {
+		address, kind string
+		fresh         bool
 	}
-
-	seen := make(map[string]struct{})
-	var lanFresh []string
-	var tailscaleFresh []string
-
-	for _, dp := range peers {
-		if dp.DeviceID != cfg.LastPeerID {
+	var available []candidate
+	seen := make(map[string]bool)
+	add := func(address, kind string, fresh bool) {
+		if address == "" || seen[address] {
+			return
+		}
+		seen[address] = true
+		if kind == "" {
+			kind = "network"
+		}
+		available = append(available, candidate{address, kind, fresh})
+	}
+	for _, peer := range peers {
+		if peer.DeviceID != cfg.LastPeerID {
 			continue
 		}
-		for _, addr := range dp.Addresses {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				continue
+		for _, address := range peer.Addresses {
+			kind := peer.AddressKinds[address]
+			if kind == "" {
+				host, _, err := net.SplitHostPort(address)
+				if err == nil && link.IsTailscaleIP(net.ParseIP(host)) {
+					kind = "tailscale"
+				} else {
+					kind = "lan"
+				}
 			}
-			ip := net.ParseIP(host)
-			if ip != nil && !isTailscaleIP(ip) {
-				lanFresh = appendUnique(lanFresh, seen, addr)
-			} else {
-				tailscaleFresh = appendUnique(tailscaleFresh, seen, addr)
-			}
+			add(address, kind, true)
 		}
 	}
-
-	var lanSaved []string
-	var tailscaleSaved []string
-	if addr, ok := cfg.LastPeerAddr["lan"]; ok {
-		lanSaved = appendUnique(lanSaved, seen, addr)
+	for kind, address := range cfg.LastPeerAddr {
+		add(address, kind, false)
 	}
-	if addr, ok := cfg.LastPeerAddr["tailscale"]; ok {
-		tailscaleSaved = appendUnique(tailscaleSaved, seen, addr)
+	sort.SliceStable(available, func(i, j int) bool {
+		l, r := link.Rank(available[i].kind), link.Rank(available[j].kind)
+		if l != r {
+			return l < r
+		}
+		if available[i].fresh != available[j].fresh {
+			return available[i].fresh
+		}
+		return available[i].address < available[j].address
+	})
+	result := make([]string, 0, len(available))
+	for _, c := range available {
+		result = append(result, c.address)
 	}
-
-	candidates := append([]string{}, lanFresh...)
-	candidates = append(candidates, lanSaved...)
-	candidates = append(candidates, tailscaleFresh...)
-	candidates = append(candidates, tailscaleSaved...)
-
-	return candidates, cfg.LastPeerName
+	return result, cfg.LastPeerName
 }
 
 func (a *App) reconnectCandidates() ([]string, string) {
@@ -79,15 +83,28 @@ func (a *App) reconnectCandidates() ([]string, string) {
 }
 
 func (a *App) tryConnectCandidates(logPrefix string, candidates []string) (string, error) {
+	return tryCandidates(logPrefix, candidates, func(addr string) error {
+		return a.transport.ConnectTo(addr, "")
+	})
+}
+
+// tryCandidates connects to each address in order until one succeeds. Only
+// connectivity failures (transport.ErrDial) advance to the next address; an
+// authentication, PIN or trust failure stops immediately so a rejected peer
+// identity is never silently retried on another address.
+func tryCandidates(logPrefix string, candidates []string, connect func(addr string) error) (string, error) {
 	var lastErr error
 	for _, addr := range candidates {
 		log.Printf("%s: trying %s", logPrefix, addr)
-		if err := a.transport.ConnectTo(addr, ""); err != nil {
-			log.Printf("%s: %s failed: %v", logPrefix, addr, err)
-			lastErr = err
-			continue
+		err := connect(addr)
+		if err == nil {
+			return addr, nil
 		}
-		return addr, nil
+		log.Printf("%s: %s failed: %v", logPrefix, addr, err)
+		lastErr = err
+		if !errors.Is(err, transport.ErrDial) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no candidates available")
@@ -125,9 +142,14 @@ func (a *App) reconnectLoop(ctx context.Context, expectedAddr string) {
 		a.mu.RLock()
 		current := a.lastPeerAddr
 		reconnectEnabled := a.autoReconnect
+		suspended := a.suspended
 		a.mu.RUnlock()
 		if !reconnectEnabled {
 			log.Printf("auto-reconnect: cancelled (disabled)")
+			return
+		}
+		if suspended {
+			log.Printf("auto-reconnect: cancelled (system suspending; resume reconnects)")
 			return
 		}
 		if current != expectedAddr {
@@ -145,13 +167,25 @@ func (a *App) reconnectLoop(ctx context.Context, expectedAddr string) {
 			log.Printf("auto-reconnect: no addresses known for peer %s yet (attempt %d, retry in %v)", peerName, attempt, delay)
 		} else {
 			log.Printf("auto-reconnect: attempt %d to %s via %d candidates (backoff %v)", attempt, peerName, len(candidates), delay)
-			wailsRuntime.EventsEmit(a.ctx, "session-updated", a.GetSession())
+			a.emitSessionUpdated()
 
 			connectedAddr, lastErr := a.tryConnectCandidates("auto-reconnect", candidates)
 
 			if connectedAddr != "" {
 				log.Printf("auto-reconnect: success to %s", connectedAddr)
-				time.Sleep(3 * time.Second)
+				// Remember the address that actually worked (it may differ
+				// from the one we lost) unless the user changed peer meanwhile.
+				a.mu.Lock()
+				if a.lastPeerAddr == expectedAddr {
+					a.lastPeerAddr = connectedAddr
+				}
+				a.mu.Unlock()
+				expectedAddr = connectedAddr
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
 				if a.transport.GetSession() != nil {
 					return
 				}
@@ -220,6 +254,12 @@ func (a *App) UntrustPeer(peerID string) error {
 	if err := a.trust.Remove(peerID); err != nil {
 		return err
 	}
+	// Revoking trust must also terminate an active session.
+	if a.transport != nil {
+		if session := a.transport.GetSession(); session != nil && session.PeerID == peerID {
+			a.transport.Disconnect()
+		}
+	}
 	a.settings.Update(func(s *Settings) {
 		if s.LastPeerID == peerID {
 			s.LastPeerID = ""
@@ -228,7 +268,7 @@ func (a *App) UntrustPeer(peerID string) error {
 		}
 	})
 	if a.ctx != nil {
-		wailsRuntime.EventsEmit(a.ctx, "peers-updated", a.GetPeers())
+		a.emitPeersUpdated()
 	}
 	return nil
 }
@@ -255,17 +295,12 @@ func (a *App) Reconnect() error {
 	connectedAddr, err := a.tryConnectCandidates("reconnect", candidates)
 	if err == nil {
 		log.Printf("reconnect: connected via %s", connectedAddr)
+		a.mu.Lock()
+		a.lastPeerAddr = connectedAddr
+		a.mu.Unlock()
 		return nil
 	}
 	return fmt.Errorf("all addresses failed: %v", err)
-}
-
-func generatePairingCode() string {
-	value, err := rand.Int(rand.Reader, big.NewInt(1000000))
-	if err != nil {
-		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
-	}
-	return fmt.Sprintf("%06d", value.Int64())
 }
 
 func (a *App) GetLastPeer() map[string]string {
@@ -287,16 +322,9 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 	addrs := make(map[string]string)
 
 	if s := a.transport.GetSession(); s != nil && s.Role == "controller" {
-		remoteAddr := s.RemoteAddr()
-		host, _, err := net.SplitHostPort(remoteAddr)
-		if err == nil {
-			ip := net.ParseIP(host)
-			if ip != nil && isTailscaleIP(ip) {
-				addrs["tailscale"] = remoteAddr
-			} else {
-				addrs["lan"] = remoteAddr
-			}
-		}
+		addr := s.RemoteAddr()
+		kind := link.RouteKind(addr)
+		addrs[kind] = addr
 	}
 
 	if a.discovery != nil {
@@ -305,17 +333,12 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 				continue
 			}
 			for _, addr := range dp.Addresses {
-				host, _, err := net.SplitHostPort(addr)
-				if err != nil {
-					continue
+				kind := dp.AddressKinds[addr]
+				if kind == "" {
+					kind = link.RouteKind(addr)
 				}
-				ip := net.ParseIP(host)
-				if ip != nil && isTailscaleIP(ip) {
-					if addrs["tailscale"] == "" {
-						addrs["tailscale"] = addr
-					}
-				} else if addrs["lan"] == "" {
-					addrs["lan"] = addr
+				if addrs[kind] == "" {
+					addrs[kind] = addr
 				}
 			}
 		}
@@ -327,11 +350,4 @@ func (a *App) saveLastPeer(peerID, peerName string) {
 		s.LastPeerAddr = addrs
 	})
 	log.Printf("saved last peer: %s (%s) addrs=%v", peerName, shortPeerID(peerID), addrs)
-}
-
-func shortPeerID(id string) string {
-	if len(id) <= 12 {
-		return id
-	}
-	return id[:12]
 }

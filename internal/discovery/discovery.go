@@ -11,9 +11,18 @@ import (
 	"time"
 
 	"multisnekkvm/internal/identity"
+	"multisnekkvm/internal/link"
+	"multisnekkvm/internal/logutil"
+	"multisnekkvm/internal/resilience"
 )
 
-const peerTTL = 15 * time.Second
+const (
+	peerTTL = 15 * time.Second
+	// maxPeers bounds memory use if a LAN floods us with fake device IDs.
+	maxPeers = 64
+	// maxAddressesPerPeer bounds per-peer address growth for the same reason.
+	maxAddressesPerPeer = 16
+)
 
 type broadcastMessage struct {
 	DeviceID string `json:"id"`
@@ -22,15 +31,15 @@ type broadcastMessage struct {
 }
 
 type DiscoveredPeer struct {
-	DeviceID    string
-	Name        string
-	Address     string
-	Addresses   []string
-	Fingerprint string
-	Routes      []string
-	LastSeen    time.Time
-	addressSeen map[string]time.Time
-	routeSeen   map[string]time.Time
+	DeviceID     string
+	Name         string
+	Address      string
+	Addresses    []string
+	Fingerprint  string
+	Routes       []string
+	AddressKinds map[string]string
+	LastSeen     time.Time
+	addressSeen  map[string]time.Time
 }
 
 // IPsProvider is satisfied by anything that can return Tailscale target IPs.
@@ -56,22 +65,61 @@ func NewDiscovery(device identity.DeviceInfo, broadcastPort int, ts IPsProvider)
 }
 
 func (d *Discovery) Run(ctx context.Context) {
-	go d.listen(ctx)
-	go d.broadcast(ctx)
-	go d.cleanup(ctx)
+	// SafeGoRestart recovers panics and restarts with exponential backoff
+	// whenever a loop returns early (e.g. ListenUDP failing because the
+	// port is temporarily unavailable).
+	resilience.SafeGoRestart(ctx, "discovery-listen", d.listen)
+	resilience.SafeGoRestart(ctx, "discovery-broadcast", d.broadcast)
+	resilience.SafeGoRestart(ctx, "discovery-cleanup", d.cleanup)
 	<-ctx.Done()
+}
+
+// PeerCount returns the number of tracked peers without resolving routes.
+func (d *Discovery) PeerCount() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return len(d.peers)
 }
 
 func (d *Discovery) Peers() []DiscoveredPeer {
 	d.mu.RLock()
-	defer d.mu.RUnlock()
-
 	result := make([]DiscoveredPeer, 0, len(d.peers))
 	for _, p := range d.peers {
 		copyPeer := *p
 		copyPeer.Addresses = append([]string(nil), p.Addresses...)
-		copyPeer.Routes = append([]string(nil), p.Routes...)
+		copyPeer.addressSeen = nil
 		result = append(result, copyPeer)
+	}
+	d.mu.RUnlock()
+
+	// Detect the Windows-selected outgoing network interface outside the
+	// discovery mutex. USB4NET and network-class USB bridges are ordinary
+	// IP interfaces and do not require a separate wire protocol.
+	for i := range result {
+		peer := &result[i]
+		peer.AddressKinds = make(map[string]string, len(peer.Addresses))
+		routes := make(map[string]bool)
+		for _, addr := range peer.Addresses {
+			kind := link.RouteKind(addr)
+			peer.AddressKinds[addr] = kind
+			routes[kind] = true
+		}
+		peer.Addresses = link.SortAddresses(peer.Addresses, peer.AddressKinds)
+		peer.Address = ""
+		if len(peer.Addresses) > 0 {
+			peer.Address = peer.Addresses[0]
+		}
+		peer.Routes = make([]string, 0, len(routes))
+		for route := range routes {
+			peer.Routes = append(peer.Routes, route)
+		}
+		sort.Slice(peer.Routes, func(i, j int) bool {
+			left, right := peer.Routes[i], peer.Routes[j]
+			if link.Rank(left) != link.Rank(right) {
+				return link.Rank(left) < link.Rank(right)
+			}
+			return left < right
+		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Name == result[j].Name {
@@ -177,15 +225,21 @@ func (d *Discovery) sendTo(data []byte, broadcastIP net.IP, localIP net.IP) {
 func (d *Discovery) listen(ctx context.Context) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: d.port})
 	if err != nil {
+		// Returning lets SafeGoRestart retry with backoff.
 		log.Printf("discovery: listen error: %v", err)
 		return
 	}
 	defer conn.Close()
 
-	go func() {
-		<-ctx.Done()
-		conn.Close()
-	}()
+	stop := make(chan struct{})
+	defer close(stop)
+	logutil.SafeGo("discovery-listen-close", func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-stop:
+		}
+	})
 
 	buf := make([]byte, 4096)
 	for {
@@ -206,24 +260,28 @@ func (d *Discovery) listen(ctx context.Context) {
 			continue
 		}
 
-		route := routeForIP(remoteAddr.IP)
 		address := net.JoinHostPort(remoteAddr.IP.String(), fmt.Sprintf("%d", msg.Port))
 
 		now := time.Now()
 		d.mu.Lock()
 		peer := d.peers[msg.DeviceID]
 		if peer == nil {
+			if len(d.peers) >= maxPeers {
+				d.mu.Unlock()
+				logDroppedPeer(msg.DeviceID)
+				continue
+			}
 			peer = &DiscoveredPeer{
 				DeviceID:    msg.DeviceID,
 				addressSeen: make(map[string]time.Time),
-				routeSeen:   make(map[string]time.Time),
 			}
 			d.peers[msg.DeviceID] = peer
 		}
 		peer.Name = msg.Name
 		peer.LastSeen = now
-		peer.addressSeen[address] = now
-		peer.routeSeen[route] = now
+		if _, known := peer.addressSeen[address]; known || len(peer.addressSeen) < maxAddressesPerPeer {
+			peer.addressSeen[address] = now
+		}
 		refreshPeerSnapshot(peer, now.Add(-peerTTL))
 		d.mu.Unlock()
 	}
@@ -258,69 +316,27 @@ func refreshPeerSnapshot(peer *DiscoveredPeer, cutoff time.Time) {
 			delete(peer.addressSeen, address)
 		}
 	}
-	for route, seenAt := range peer.routeSeen {
-		if seenAt.Before(cutoff) {
-			delete(peer.routeSeen, route)
-		}
-	}
 
+	// Address, Routes and AddressKinds are derived per call in Peers()
+	// from the OS-selected route for each address.
 	peer.Addresses = peer.Addresses[:0]
 	for address := range peer.addressSeen {
 		peer.Addresses = append(peer.Addresses, address)
 	}
 	sort.Strings(peer.Addresses)
-
-	peer.Routes = peer.Routes[:0]
-	for route := range peer.routeSeen {
-		peer.Routes = append(peer.Routes, route)
-	}
-	sort.Strings(peer.Routes)
-
-	peer.Address = ""
-	for _, address := range peer.Addresses {
-		if shouldPreferAddress(peer.Address, address) {
-			peer.Address = address
-		}
-	}
 }
 
-func routeForIP(ip net.IP) string {
-	if IsTailscaleIP(ip) {
-		return "tailscale"
-	}
-	return "lan"
-}
+var (
+	droppedPeerLogMu sync.Mutex
+	droppedPeerLogAt time.Time
+)
 
-func shouldPreferAddress(current, candidate string) bool {
-	if current == "" {
-		return true
+func logDroppedPeer(id string) {
+	droppedPeerLogMu.Lock()
+	defer droppedPeerLogMu.Unlock()
+	if time.Since(droppedPeerLogAt) < time.Minute {
+		return
 	}
-	currentHost, _, currentErr := net.SplitHostPort(current)
-	candidateHost, _, candidateErr := net.SplitHostPort(candidate)
-	if currentErr != nil || candidateErr != nil {
-		return current == ""
-	}
-	return addressRank(candidateHost) < addressRank(currentHost)
-}
-
-func addressRank(host string) int {
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return 1
-	}
-	if IsTailscaleIP(ip) {
-		return 1
-	}
-	return 0
-}
-
-// IsTailscaleIP reports whether ip is in a Tailscale address range.
-func IsTailscaleIP(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		return ip4[0] == 100 && ip4[1]&0xc0 == 64
-	}
-	return len(ip) >= 6 && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0
+	droppedPeerLogAt = time.Now()
+	log.Printf("discovery: peer table full (%d), ignoring new device %.8s", maxPeers, id)
 }

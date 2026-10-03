@@ -58,6 +58,10 @@ export function GetCaptureDeviceID() {
   return window['go']['app']['App']['GetCaptureDeviceID']();
 }
 
+export function GetConnectionInterfaces() {
+  return window['go']['app']['App']['GetConnectionInterfaces']();
+}
+
 export function GetDevice() {
   return window['go']['app']['App']['GetDevice']();
 }

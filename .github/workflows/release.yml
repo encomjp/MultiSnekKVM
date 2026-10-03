@@ -62,7 +62,13 @@ jobs:
           $env:PATH = "$msys2\mingw64\bin;$env:PATH"
           $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
           go test ./internal/...
-          cd frontend; npm install; npm test; cd ..
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location frontend
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
 
       - name: Build
         shell: pwsh

@@ -3,11 +3,10 @@ package audio
 import (
 	"fmt"
 	"time"
-
-	"multisnekkvm/internal/protocol"
 )
 
 const (
+	audioTransportAuto = "auto"
 	audioTransportPCM  = "pcm"
 	audioTransportOpus = "opus"
 
@@ -15,46 +14,29 @@ const (
 	audioProfileBalanced   = "balanced"
 	audioProfileMusic      = "music"
 
-	// TransportPCM is the exported constant for use by the root package.
-	TransportPCM = audioTransportPCM
+	// TransportAuto, TransportPCM and TransportOpus are the user-selectable
+	// desktop-audio transports. The microphone always uses Opus.
+	TransportAuto = audioTransportAuto
+	TransportPCM  = audioTransportPCM
+	TransportOpus = audioTransportOpus
 )
 
 type audioProfileSpec struct {
 	Name                 string
-	TargetClientDuration time.Duration
-	PrebufferDuration    time.Duration
-	MaxBufferedDuration  time.Duration
-	ReprimeThreshold     time.Duration
+	TargetClientDuration time.Duration // WASAPI shared-mode buffer request
 	OpusFrameDuration    time.Duration
 	OpusBitrate          int
 	OpusComplexity       int
 	OpusRestrictedDelay  bool
-	OpusEnableDTX        bool
-	OpusEnableFEC        bool
-	OpusPacketLossPct    int
 }
 
-// OutboundRealtimeStream encodes and frames captured audio for sending.
-type OutboundRealtimeStream interface {
-	Configure(transportMode, profile string, format []byte) ([]protocol.Frame, error)
-	ProcessData(payload []byte) ([]protocol.Frame, error)
-	Reset()
-}
-
-// InboundRealtimeStream decodes received audio frames for playback.
-type InboundRealtimeStream interface {
-	SetTransport(transportMode string) error
-	ProcessFormat(payload []byte) ([]byte, error)
-	ProcessData(payload []byte) ([]byte, error)
-	Reset()
-}
-
+// NormalizeTransportMode maps unknown values to the default, "auto".
 func NormalizeTransportMode(mode string) string {
 	switch mode {
-	case audioTransportOpus:
-		return audioTransportOpus
+	case audioTransportPCM, audioTransportOpus:
+		return mode
 	default:
-		return audioTransportPCM
+		return audioTransportAuto
 	}
 }
 
@@ -62,12 +44,33 @@ func ValidTransportMode(mode string) bool {
 	return NormalizeTransportMode(mode) == mode
 }
 
+// ResolveTransport picks the wire transport for a stream. "auto" sends
+// uncompressed PCM only over direct wired links (USB4, USB network bridges,
+// Ethernet) and Opus over everything else (Wi-Fi, Tailscale, Bluetooth,
+// unknown routes), where PCM's ~1.5 Mbit/s per stream causes stalls.
+// The microphone always uses Opus.
+func ResolveTransport(kind StreamKind, mode, routeKind string) string {
+	if kind == StreamMic {
+		return audioTransportOpus
+	}
+	switch NormalizeTransportMode(mode) {
+	case audioTransportPCM:
+		return audioTransportPCM
+	case audioTransportOpus:
+		return audioTransportOpus
+	}
+	switch routeKind {
+	case "usb4", "usb-bridge", "ethernet":
+		return audioTransportPCM
+	default:
+		return audioTransportOpus
+	}
+}
+
 func NormalizeProfile(profile string) string {
 	switch profile {
-	case audioProfileLowLatency:
-		return audioProfileLowLatency
-	case audioProfileMusic:
-		return audioProfileMusic
+	case audioProfileLowLatency, audioProfileMusic:
+		return profile
 	default:
 		return audioProfileBalanced
 	}
@@ -82,53 +85,33 @@ func audioProfileSpecForName(profile string) audioProfileSpec {
 	case audioProfileLowLatency:
 		return audioProfileSpec{
 			Name:                 audioProfileLowLatency,
-			TargetClientDuration: 12 * time.Millisecond,
-			PrebufferDuration:    15 * time.Millisecond,
-			MaxBufferedDuration:  80 * time.Millisecond,
-			ReprimeThreshold:     30 * time.Millisecond,
+			TargetClientDuration: 10 * time.Millisecond,
 			OpusFrameDuration:    10 * time.Millisecond,
-			OpusBitrate:          96000,
-			OpusComplexity:       4,
+			OpusBitrate:          128000,
+			OpusComplexity:       5,
 			OpusRestrictedDelay:  true,
-			OpusEnableDTX:        true,
-			OpusEnableFEC:        true,
-			OpusPacketLossPct:    15,
 		}
 	case audioProfileMusic:
 		return audioProfileSpec{
 			Name:                 audioProfileMusic,
 			TargetClientDuration: 20 * time.Millisecond,
-			PrebufferDuration:    35 * time.Millisecond,
-			MaxBufferedDuration:  140 * time.Millisecond,
-			ReprimeThreshold:     70 * time.Millisecond,
 			OpusFrameDuration:    20 * time.Millisecond,
-			OpusBitrate:          192000,
+			OpusBitrate:          256000,
 			OpusComplexity:       10,
-			OpusRestrictedDelay:  false,
-			OpusEnableDTX:        false,
-			OpusEnableFEC:        false,
-			OpusPacketLossPct:    5,
 		}
 	default:
 		return audioProfileSpec{
 			Name:                 audioProfileBalanced,
 			TargetClientDuration: 20 * time.Millisecond,
-			PrebufferDuration:    25 * time.Millisecond,
-			MaxBufferedDuration:  100 * time.Millisecond,
-			ReprimeThreshold:     50 * time.Millisecond,
 			OpusFrameDuration:    20 * time.Millisecond,
-			OpusBitrate:          128000,
-			OpusComplexity:       6,
-			OpusRestrictedDelay:  false,
-			OpusEnableDTX:        true,
-			OpusEnableFEC:        true,
-			OpusPacketLossPct:    10,
+			OpusBitrate:          160000,
+			OpusComplexity:       8,
 		}
 	}
 }
 
 func encodeAudioTransportMode(mode string) []byte {
-	if NormalizeTransportMode(mode) == audioTransportOpus {
+	if mode == audioTransportOpus {
 		return []byte{1}
 	}
 	return []byte{0}
@@ -148,10 +131,12 @@ func DecodeTransportMode(payload []byte) (string, error) {
 	}
 }
 
+// estimatedPlaybackBaseLatency is the local buffering part of the path:
+// device buffer + jitter-buffer target (+ one Opus frame).
 func estimatedPlaybackBaseLatency(transportMode, profile string) time.Duration {
 	spec := audioProfileSpecForName(profile)
-	base := spec.TargetClientDuration + spec.PrebufferDuration
-	if NormalizeTransportMode(transportMode) == audioTransportOpus {
+	base := spec.TargetClientDuration + playoutConfigForProfile(profile).Target
+	if transportMode == audioTransportOpus {
 		base += spec.OpusFrameDuration
 	}
 	return base
