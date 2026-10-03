@@ -14,28 +14,43 @@ import (
 )
 
 func (a *AudioStreamer) StartMicCapture(sendFn func(protocol.Frame)) error {
+	a.micCapLifecycle.Lock()
+	defer a.micCapLifecycle.Unlock()
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.micCapturing {
+		a.mu.Unlock()
 		return nil
 	}
-	a.micCapturing = true
+	if a.micCapStop != nil {
+		a.mu.Unlock()
+		a.micCapWg.Wait()
+		a.mu.Lock()
+		a.micCapStop = nil
+	}
 	a.micCapStop = make(chan struct{})
+	a.micCapturing = true
 	a.micCapWg.Add(1)
+	a.mu.Unlock()
 	go a.micCaptureLoop(sendFn)
 	return nil
 }
 
 func (a *AudioStreamer) StopMicCapture() {
+	a.micCapLifecycle.Lock()
+	defer a.micCapLifecycle.Unlock()
 	a.mu.Lock()
-	if !a.micCapturing {
+	stop := a.micCapStop
+	if stop == nil {
 		a.mu.Unlock()
 		return
 	}
-	close(a.micCapStop)
+	close(stop)
 	a.micCapturing = false
 	a.mu.Unlock()
 	a.micCapWg.Wait()
+	a.mu.Lock()
+	a.micCapStop = nil
+	a.mu.Unlock()
 }
 
 func (a *AudioStreamer) SetMicPlaybackFormat(format []byte) error {
@@ -43,6 +58,8 @@ func (a *AudioStreamer) SetMicPlaybackFormat(format []byte) error {
 		return fmt.Errorf("invalid mic format payload (%d bytes)", len(format))
 	}
 	next := cloneBytes(format)
+	a.micPlayLifecycle.Lock()
+	defer a.micPlayLifecycle.Unlock()
 
 	a.mu.Lock()
 	same := bytes.Equal(a.micPlayFmt, next)
@@ -53,20 +70,19 @@ func (a *AudioStreamer) SetMicPlaybackFormat(format []byte) error {
 	if same {
 		return nil
 	}
-
+	if wasPlaying {
+		a.stopMicPlaybackLocked()
+	}
 	a.micPlayMu.Lock()
 	a.micPlayBuf = nil
 	a.micPlayMu.Unlock()
-
-	if wasPlaying {
-		a.StopMicPlayback()
-	}
-
 	log.Printf("mic playback format set: %s", describeWaveFormat(next))
 	return nil
 }
 
 func (a *AudioStreamer) StartMicPlayback() error {
+	a.micPlayLifecycle.Lock()
+	defer a.micPlayLifecycle.Unlock()
 	a.mu.Lock()
 	if a.micPlaying {
 		a.mu.Unlock()
@@ -77,40 +93,50 @@ func (a *AudioStreamer) StartMicPlayback() error {
 	if len(format) == 0 {
 		return fmt.Errorf("mic playback format not received yet")
 	}
-	bpf := blockAlignForFormat(format)
-	if bpf == 0 {
+	if blockAlignForFormat(format) == 0 {
 		return fmt.Errorf("invalid mic playback block alignment")
 	}
-
 	a.mu.Lock()
-	if a.micPlaying {
+	if a.micPlayStop != nil {
 		a.mu.Unlock()
-		return nil
+		a.micPlayWg.Wait()
+		a.mu.Lock()
+		a.micPlayStop = nil
 	}
+	a.micPlayStop = make(chan struct{})
 	a.micPlaying = true
 	a.micPlayReady = false
+	a.micPlayWg.Add(1)
 	a.mu.Unlock()
 	a.micPlayMu.Lock()
 	a.micPlayBuf = nil
 	a.micOverflowLogs = 0
 	a.micPlayMu.Unlock()
-	a.micPlayStop = make(chan struct{})
-	a.micPlayWg.Add(1)
 	go a.micPlaybackLoop(format)
 	return nil
 }
 
 func (a *AudioStreamer) StopMicPlayback() {
+	a.micPlayLifecycle.Lock()
+	defer a.micPlayLifecycle.Unlock()
+	a.stopMicPlaybackLocked()
+}
+
+func (a *AudioStreamer) stopMicPlaybackLocked() {
 	a.mu.Lock()
-	if !a.micPlaying {
+	stop := a.micPlayStop
+	if stop == nil {
 		a.mu.Unlock()
 		return
 	}
-	close(a.micPlayStop)
+	close(stop)
 	a.micPlaying = false
 	a.micPlayReady = false
 	a.mu.Unlock()
 	a.micPlayWg.Wait()
+	a.mu.Lock()
+	a.micPlayStop = nil
+	a.mu.Unlock()
 	a.micPlayMu.Lock()
 	a.micPlayBuf = nil
 	a.micPlayMu.Unlock()
