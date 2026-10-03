@@ -169,7 +169,6 @@ type InputHook struct {
 	inRemoteMode       bool
 	sendFn             func(protocol.Frame)
 	onStateChange      func()
-	onEdgeDrag         func()
 	stateChangeRunning bool
 	stateChangePending bool
 	edgeSide           string
@@ -230,12 +229,6 @@ func NewInputHook() *InputHook {
 func (ih *InputHook) SetOnStateChange(fn func()) {
 	ih.mu.Lock()
 	ih.onStateChange = fn
-	ih.mu.Unlock()
-}
-
-func (ih *InputHook) SetOnEdgeDrag(fn func()) {
-	ih.mu.Lock()
-	ih.onEdgeDrag = fn
 	ih.mu.Unlock()
 }
 

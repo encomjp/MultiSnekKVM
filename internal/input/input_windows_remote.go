@@ -157,17 +157,11 @@ func (ih *InputHook) edgeLoop(stopCh <-chan struct{}) {
 				}
 
 				// Dwell satisfied. If LMB is still held (window drag / file drag):
-				// call the drag callback, then wait for button release. After
-				// release, require a fresh dwell — the cursor is still at the edge
-				// at mouse-up, and entering remote mode immediately would break
-				// any drop target on the host (dropped files would land in void).
+				// wait for button release. After release, require a fresh dwell —
+				// the cursor is still at the edge at mouse-up, and entering remote
+				// mode immediately would break any drop target on the host
+				// (dropped files would land in void).
 				if isLeftMouseButtonDown() {
-					ih.mu.RLock()
-					dragFn := ih.onEdgeDrag
-					ih.mu.RUnlock()
-					if dragFn != nil {
-						dragFn()
-					}
 					for isLeftMouseButtonDown() {
 						select {
 						case <-stopCh:

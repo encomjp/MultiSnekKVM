@@ -160,7 +160,8 @@ func (t *Transport) recordPairingFailureLocked(now time.Time) {
 	}
 }
 
-func generateRandomPairingCode() string {
+// GeneratePairingCode returns a random 6-digit pairing PIN.
+func GeneratePairingCode() string {
 	value, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
 		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)

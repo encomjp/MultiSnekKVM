@@ -164,12 +164,12 @@ func (t *Transport) handleInbound(conn *tls.Conn) {
 		closeCh:         make(chan struct{}),
 	}
 	if !t.installSession(s) {
-		log.Printf("inbound connection from %s (%s) dropped: already connected", peerHello.Name, shortPeerID(peerHello.DeviceID))
+		log.Printf("inbound connection from %s (%s) dropped: already connected", peerHello.Name, ShortPeerID(peerHello.DeviceID))
 		conn.Close()
 		return
 	}
 
-	log.Printf("inbound connection from %s (%s)", peerHello.Name, shortPeerID(peerHello.DeviceID))
+	log.Printf("inbound connection from %s (%s)", peerHello.Name, ShortPeerID(peerHello.DeviceID))
 	if t.OnConnect != nil {
 		safeCall("OnConnect/inbound", func() { t.OnConnect(peerHello.DeviceID, peerHello.Name, "controlled") })
 	}
@@ -225,7 +225,7 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 		return fmt.Errorf("already connected")
 	}
 
-	log.Printf("connected to %s (%s)", peerHello.Name, shortPeerID(peerHello.DeviceID))
+	log.Printf("connected to %s (%s)", peerHello.Name, ShortPeerID(peerHello.DeviceID))
 	if t.OnConnect != nil {
 		safeCall("OnConnect/outbound", func() { t.OnConnect(peerHello.DeviceID, peerHello.Name, "controller") })
 	}

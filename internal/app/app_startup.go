@@ -89,9 +89,6 @@ func (a *App) Startup(ctx context.Context) {
 		a.emitSessionUpdated()
 		a.handleControlStateChange()
 	})
-	a.inputHook.SetOnEdgeDrag(func() {
-		a.handleEdgeDrag()
-	})
 
 	audioStreamer, err := NewAudioStreamer()
 	if err != nil {
