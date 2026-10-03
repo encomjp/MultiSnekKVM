@@ -131,6 +131,8 @@ func (a *App) GetSession() SessionStatus {
 	lat, _, _, audioLat := a.currentAudioLatencyState()
 	jitter := a.currentJitterMs()
 	return SessionStatus{
+		Route:          link.KindForAddress(s.RemoteAddr(), link.Adapters()),
+		RemoteAddress:  s.RemoteAddr(),
 		Connected:      true,
 		Controlling:    controlling,
 		PeerName:       s.PeerName,
