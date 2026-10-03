@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -63,5 +65,66 @@ func TestReleaseAllModifiersOnlyAfterInjectedInput(t *testing.T) {
 	a.releaseInjectedRemoteKeys()
 	if calls != 1 {
 		t.Fatalf("no injection since last release; got %d calls", calls)
+	}
+}
+
+func TestDiscardReceivedFilesOnlyRemovesRegisteredDirs(t *testing.T) {
+	root := t.TempDir()
+	registered := filepath.Join(root, "recv-1")
+	other := filepath.Join(root, "precious")
+	for _, d := range []string{registered, other} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &App{}
+	a.addRecvDir(registered)
+
+	a.DiscardReceivedFiles(other)
+	a.DiscardReceivedFiles(registered + string(filepath.Separator) + "..")
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("unregistered directory must not be removed: %v", err)
+	}
+
+	// Equivalent spelling of the registered path is accepted after Clean.
+	a.DiscardReceivedFiles(filepath.Join(root, ".", "recv-1"))
+	if _, err := os.Stat(registered); !os.IsNotExist(err) {
+		t.Fatalf("registered directory should be removed, stat err=%v", err)
+	}
+	if _, ok := a.lookupRecvDir(registered); ok {
+		t.Fatal("directory must be unregistered after discard")
+	}
+	// A second discard of the same path is now rejected.
+	if err := os.MkdirAll(registered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a.DiscardReceivedFiles(registered)
+	if _, err := os.Stat(registered); err != nil {
+		t.Fatalf("no-longer-registered directory must not be removed: %v", err)
+	}
+}
+
+func TestSaveReceivedFilesRejectsUnknownDir(t *testing.T) {
+	a := &App{}
+	if _, err := a.SaveReceivedFiles(t.TempDir()); err == nil {
+		t.Fatal("expected unknown directory to be rejected")
+	}
+}
+
+func TestMoveFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.txt")
+	dst := filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(src, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "hello" {
+		t.Fatalf("dst = %q, %v", b, err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("source should be gone after move")
 	}
 }
