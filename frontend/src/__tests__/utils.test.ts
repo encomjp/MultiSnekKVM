@@ -5,6 +5,7 @@ import {
   shortFingerprint,
   timeAgo,
   orderedRoutes,
+  endpointLabel,
   routeLabel,
   preferredRouteLabel,
   sessionStateLabel,
@@ -130,6 +131,24 @@ describe('orderedRoutes', () => {
 
   it('puts unknown routes last', () => {
     expect(orderedRoutes(['unknown', 'lan'])).toEqual(['lan', 'unknown']);
+  });
+});
+
+describe('endpointLabel', () => {
+  it('identifies link-local endpoints used by direct USB4 links', () => {
+    expect(endpointLabel('169.254.18.4:24831')).toBe('Direct link');
+  });
+
+  it('identifies tailnet/CGNAT endpoints', () => {
+    expect(endpointLabel('100.92.10.17:24831')).toBe('Tailnet / CGNAT');
+  });
+
+  it('does not guess whether private LAN is Ethernet or Bluetooth PAN', () => {
+    expect(endpointLabel('192.168.2.5:24831')).toBe('Network');
+  });
+
+  it('accepts bracketed IPv6 endpoints', () => {
+    expect(endpointLabel('[fe80::12]:24831')).toBe('Network');
   });
 });
 
