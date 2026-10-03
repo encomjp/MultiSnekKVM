@@ -225,20 +225,14 @@ func (a *App) connectWithPairingCode(address, pairingCode string) error {
 		candidates = peerConnectionCandidates(normalized, a.discovery.Peers())
 	}
 
-	connectedAddr := ""
-	for _, candidate := range candidates {
-		err = a.transport.ConnectTo(candidate, strings.TrimSpace(pairingCode))
-		if err == nil {
-			connectedAddr = candidate
-			break
-		}
-		// Only retry connectivity failures. An authentication, PIN or trust
-		// failure must not silently switch to another peer or retry the PIN.
-		if !strings.HasPrefix(err.Error(), "connect: ") {
-			break
-		}
-	}
-	if connectedAddr == "" {
+	// Only connectivity failures advance to the next address. An
+	// authentication, PIN or trust failure must not silently switch to
+	// another address or retry the PIN.
+	code := strings.TrimSpace(pairingCode)
+	connectedAddr, err := tryCandidates("connect", candidates, func(addr string) error {
+		return a.transport.ConnectTo(addr, code)
+	})
+	if err != nil {
 		return err
 	}
 
