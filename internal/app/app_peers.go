@@ -10,6 +10,7 @@ import (
 
 	"multisnekkvm/internal/logutil"
 	"multisnekkvm/internal/link"
+	"multisnekkvm/internal/discovery"
 )
 
 func (a *App) syncPairingCode() bool {
@@ -175,19 +176,50 @@ func (a *App) Connect(address string) error {
 	return a.connectWithPairingCode(address, "")
 }
 
+// peerConnectionCandidates only tries addresses that discovery associated
+// with the *same* device. An explicitly selected address always goes first.
+func peerConnectionCandidates(selected string, peers []discovery.DiscoveredPeer) []string {
+	candidates := []string{selected}
+	for _, peer := range peers {
+		found := peer.Address == selected
+		for _, address := range peer.Addresses {
+			if address == selected { found = true; break }
+		}
+		if !found { continue }
+		for _, address := range peer.Addresses {
+			if address != selected {
+				candidates = append(candidates, address)
+			}
+		}
+		break
+	}
+	return candidates
+}
+
 func (a *App) connectWithPairingCode(address, pairingCode string) error {
-	if a.transport == nil {
-		return fmt.Errorf("transport unavailable")
-	}
+	if a.transport == nil { return fmt.Errorf("transport unavailable") }
 	normalized, err := normalizePeerAddress(address, a.device.Port)
-	if err != nil {
-		return err
+	if err != nil { return err }
+	candidates := []string{normalized}
+	if a.discovery != nil {
+		candidates = peerConnectionCandidates(normalized, a.discovery.Peers())
 	}
-	if err := a.transport.ConnectTo(normalized, strings.TrimSpace(pairingCode)); err != nil {
-		return err
+
+	connectedAddr := ""
+	for _, candidate := range candidates {
+		err = a.transport.ConnectTo(candidate, strings.TrimSpace(pairingCode))
+		if err == nil {
+			connectedAddr = candidate
+			break
+		}
+		// Only retry connectivity failures. An authentication, PIN or trust
+		// failure must not silently switch to another peer or retry the PIN.
+		if !strings.HasPrefix(err.Error(), "connect: ") { break }
 	}
+	if connectedAddr == "" { return err }
+
 	a.mu.Lock()
-	a.lastPeerAddr = normalized
+	a.lastPeerAddr = connectedAddr
 	if session := a.transport.GetSession(); session != nil {
 		if manualPeer, ok := a.manualPeers[normalized]; ok {
 			manualPeer.ID = session.PeerID
