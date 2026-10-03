@@ -196,6 +196,17 @@ func (a *App) enqueueSend(f Frame) {
 		default:
 			atomic.AddUint64(&a.muxHighDroppedN, 1)
 			log.Printf("send-mux: high lane full, dropping frame 0x%02x queue=%d", f.Type, len(a.muxHigh))
+			// A lost key/button transition or switch-back is unsafe: terminate
+			// the session so both peers release their held input state.
+			switch f.Type {
+			case protocol.MsgKeyDown, protocol.MsgKeyUp, protocol.MsgMouseClick,
+				protocol.MsgSwitchBack, protocol.MsgUnicodeText:
+				if a.transport != nil {
+					if session := a.transport.GetSession(); session != nil {
+						session.Close()
+					}
+				}
+			}
 		}
 	}
 }
