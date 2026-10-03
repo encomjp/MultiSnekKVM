@@ -51,6 +51,21 @@ export function orderedRoutes(routes = []) {
   });
 }
 
+// Classify a peer endpoint by its IP, not the adapter label. Link-local
+// addresses are common on USB4 direct links; private ranges can also belong
+// to Bluetooth PAN, so we deliberately avoid guessing the hardware type.
+export function endpointLabel(address) {
+  const host = address.startsWith('[')
+    ? address.slice(1, address.indexOf(']'))
+    : address.replace(/:\\d+$/, '');
+  const parts = host.split('.').map(Number);
+  if (parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    if (parts[0] === 169 && parts[1] === 254) return 'Direct link';
+    if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return 'Tailnet / CGNAT';
+  }
+  return 'Network';
+}
+
 export function routeLabel(route) {
   if (route === 'lan') {
     return 'LAN';
