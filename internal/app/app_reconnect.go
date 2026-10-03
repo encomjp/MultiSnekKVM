@@ -7,67 +7,56 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"multisnekkvm/internal/discovery"
+	"multisnekkvm/internal/link"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// reconnectCandidatesFor retains fresh addresses ahead of saved addresses
+// within each route, and tries reliable direct links before slower fallbacks.
 func reconnectCandidatesFor(cfg Settings, peers []discovery.DiscoveredPeer) ([]string, string) {
-	if cfg.LastPeerID == "" {
-		return nil, ""
+	if cfg.LastPeerID == "" { return nil, "" }
+	type candidate struct { address, kind string; fresh bool }
+	var available []candidate
+	seen := make(map[string]bool)
+	add := func(address, kind string, fresh bool) {
+		if address == "" || seen[address] { return }
+		seen[address] = true
+		if kind == "" { kind = "network" }
+		available = append(available, candidate{address, kind, fresh})
 	}
-
-	appendUnique := func(candidates []string, seen map[string]struct{}, addr string) []string {
-		if addr == "" {
-			return candidates
-		}
-		if _, ok := seen[addr]; ok {
-			return candidates
-		}
-		seen[addr] = struct{}{}
-		return append(candidates, addr)
-	}
-
-	seen := make(map[string]struct{})
-	var lanFresh []string
-	var tailscaleFresh []string
-
-	for _, dp := range peers {
-		if dp.DeviceID != cfg.LastPeerID {
-			continue
-		}
-		for _, addr := range dp.Addresses {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				continue
+	for _, peer := range peers {
+		if peer.DeviceID != cfg.LastPeerID { continue }
+		for _, address := range peer.Addresses {
+			kind := peer.AddressKinds[address]
+			if kind == "" {
+				host, _, err := net.SplitHostPort(address)
+				if err == nil && link.IsTailscaleIP(net.ParseIP(host)) {
+					kind = "tailscale"
+				} else {
+					kind = "lan"
+				}
 			}
-			ip := net.ParseIP(host)
-			if ip != nil && !isTailscaleIP(ip) {
-				lanFresh = appendUnique(lanFresh, seen, addr)
-			} else {
-				tailscaleFresh = appendUnique(tailscaleFresh, seen, addr)
-			}
+			add(address, kind, true)
 		}
 	}
-
-	var lanSaved []string
-	var tailscaleSaved []string
-	if addr, ok := cfg.LastPeerAddr["lan"]; ok {
-		lanSaved = appendUnique(lanSaved, seen, addr)
+	for kind, address := range cfg.LastPeerAddr {
+		add(address, kind, false)
 	}
-	if addr, ok := cfg.LastPeerAddr["tailscale"]; ok {
-		tailscaleSaved = appendUnique(tailscaleSaved, seen, addr)
-	}
-
-	candidates := append([]string{}, lanFresh...)
-	candidates = append(candidates, lanSaved...)
-	candidates = append(candidates, tailscaleFresh...)
-	candidates = append(candidates, tailscaleSaved...)
-
-	return candidates, cfg.LastPeerName
+	sort.SliceStable(available, func(i, j int) bool {
+		l, r := link.Rank(available[i].kind), link.Rank(available[j].kind)
+		if l != r { return l < r }
+		if available[i].fresh != available[j].fresh { return available[i].fresh }
+		return available[i].address < available[j].address
+	})
+	result := make([]string, 0, len(available))
+	for _, c := range available { result = append(result, c.address) }
+	return result, cfg.LastPeerName
 }
 
 func (a *App) reconnectCandidates() ([]string, string) {
@@ -291,38 +280,21 @@ func (a *App) GetLastPeer() map[string]string {
 
 func (a *App) saveLastPeer(peerID, peerName string) {
 	addrs := make(map[string]string)
+	adapters := link.Adapters()
 
 	if s := a.transport.GetSession(); s != nil && s.Role == "controller" {
-		remoteAddr := s.RemoteAddr()
-		host, _, err := net.SplitHostPort(remoteAddr)
-		if err == nil {
-			ip := net.ParseIP(host)
-			if ip != nil && isTailscaleIP(ip) {
-				addrs["tailscale"] = remoteAddr
-			} else {
-				addrs["lan"] = remoteAddr
-			}
-		}
+		addr := s.RemoteAddr()
+		kind := link.KindForAddress(addr, adapters)
+		addrs[kind] = addr
 	}
 
 	if a.discovery != nil {
 		for _, dp := range a.discovery.Peers() {
-			if dp.DeviceID != peerID {
-				continue
-			}
+			if dp.DeviceID != peerID { continue }
 			for _, addr := range dp.Addresses {
-				host, _, err := net.SplitHostPort(addr)
-				if err != nil {
-					continue
-				}
-				ip := net.ParseIP(host)
-				if ip != nil && isTailscaleIP(ip) {
-					if addrs["tailscale"] == "" {
-						addrs["tailscale"] = addr
-					}
-				} else if addrs["lan"] == "" {
-					addrs["lan"] = addr
-				}
+				kind := dp.AddressKinds[addr]
+				if kind == "" { kind = link.KindForAddress(addr, adapters) }
+				if addrs[kind] == "" { addrs[kind] = addr }
 			}
 		}
 	}
