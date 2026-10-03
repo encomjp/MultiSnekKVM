@@ -4,11 +4,11 @@
   <ul class="notes-list">
     <li>
       <svg class="note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span>Inbound control requests are accepted only from peers already pinned in the local trust store.</span>
+      <span>First-time connections require authenticated PIN pairing; returning peers must match their pinned certificate.</span>
     </li>
     <li>
       <svg class="note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h10M17 7l-5 5 5 5"/></svg>
-      <span>LAN routes are preferred automatically whenever the same peer is reachable both locally and over Tailscale.</span>
+      <span>MultiSnek automatically prefers detected USB4, network-capable USB bridges and wired routes, then falls back to other reachable networks.</span>
     </li>
     <li>
       <svg class="note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
