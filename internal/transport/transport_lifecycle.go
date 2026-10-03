@@ -2,7 +2,6 @@ package transport
 
 import (
 	"crypto/tls"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -19,11 +18,24 @@ func (t *Transport) IsListening() bool {
 	return t.listener != nil
 }
 
+// localCertificate loads the identity certificate once and caches it.
+// A failed load is not cached so a later call can retry.
+func (t *Transport) localCertificate() (tls.Certificate, error) {
+	t.certMu.Lock()
+	defer t.certMu.Unlock()
+	if t.cert != nil {
+		return *t.cert, nil
+	}
+	cert, err := tls.LoadX509KeyPair(identity.CertPath(), identity.KeyPath())
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	t.cert = &cert
+	return cert, nil
+}
+
 func (t *Transport) Start(port int) error {
-	cert, err := tls.LoadX509KeyPair(
-		identity.CertPath(),
-		identity.KeyPath(),
-	)
+	cert, err := t.localCertificate()
 	if err != nil {
 		return fmt.Errorf("load cert: %w", err)
 	}
@@ -109,16 +121,30 @@ func (t *Transport) acceptLoop(l net.Listener) {
 	}
 }
 
-func (t *Transport) handleInbound(conn *tls.Conn) {
+// installSession publishes s as the active session unless one already
+// exists. connectMu serializes installation only; the (potentially slow,
+// unauthenticated) TLS handshake, hello exchange and pairing run before it
+// so one stalled client cannot block every other connection attempt.
+func (t *Transport) installSession(s *Session) bool {
 	t.connectMu.Lock()
+	defer t.connectMu.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.session != nil {
+		return false
+	}
+	t.session = s
+	return true
+}
+
+func (t *Transport) handleInbound(conn *tls.Conn) {
+	// Cheap early rejection; re-checked atomically in installSession.
 	if t.GetSession() != nil {
-		t.connectMu.Unlock()
 		conn.Close()
 		return
 	}
 	peerHello, peerFingerprint, err := t.exchangeHelloInbound(conn)
 	if err != nil {
-		t.connectMu.Unlock()
 		log.Printf("inbound handshake rejected: %v", err)
 		conn.Close()
 		return
@@ -128,7 +154,7 @@ func (t *Transport) handleInbound(conn *tls.Conn) {
 	if tc, ok := conn.NetConn().(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
-	t.mu.Lock()
+	_ = conn.SetDeadline(time.Time{})
 	s := &Session{
 		conn:            conn,
 		PeerID:          peerHello.DeviceID,
@@ -137,10 +163,11 @@ func (t *Transport) handleInbound(conn *tls.Conn) {
 		Role:            "controlled",
 		closeCh:         make(chan struct{}),
 	}
-	t.session = s
-	t.mu.Unlock()
-	_ = conn.SetDeadline(time.Time{})
-	t.connectMu.Unlock()
+	if !t.installSession(s) {
+		log.Printf("inbound connection from %s (%s) dropped: already connected", peerHello.Name, shortPeerID(peerHello.DeviceID))
+		conn.Close()
+		return
+	}
 
 	log.Printf("inbound connection from %s (%s)", peerHello.Name, shortPeerID(peerHello.DeviceID))
 	if t.OnConnect != nil {
@@ -151,18 +178,16 @@ func (t *Transport) handleInbound(conn *tls.Conn) {
 }
 
 func (t *Transport) ConnectTo(address string, pairingCode string) error {
-	t.connectMu.Lock()
 	if t.GetSession() != nil {
-		t.connectMu.Unlock()
 		return fmt.Errorf("already connected")
 	}
 
-	cert, err := tls.LoadX509KeyPair(identity.CertPath(), identity.KeyPath())
+	cert, err := t.localCertificate()
 	if err != nil {
-		t.connectMu.Unlock()
 		return fmt.Errorf("load cert: %w", err)
 	}
 
+	// Dial, handshake and authorization happen outside connectMu.
 	dialer := &net.Dialer{Timeout: handshakeTimeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
 		MinVersion:         tls.VersionTLS13,
@@ -170,17 +195,14 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		t.connectMu.Unlock()
-		return fmt.Errorf("connect: %w", err)
+		return &dialError{err: err}
 	}
 	peerHello, peerFingerprint, err := t.exchangeHelloOutbound(conn, pairingCode)
 	if err != nil {
-		t.connectMu.Unlock()
 		conn.Close()
 		return err
 	}
 	if err := t.authorizeOutboundPeer(peerHello, peerFingerprint, address, pairingCode); err != nil {
-		t.connectMu.Unlock()
 		conn.Close()
 		return err
 	}
@@ -189,7 +211,7 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 	if tc, ok := conn.NetConn().(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
-	t.mu.Lock()
+	_ = conn.SetDeadline(time.Time{})
 	s := &Session{
 		conn:            conn,
 		PeerID:          peerHello.DeviceID,
@@ -198,10 +220,10 @@ func (t *Transport) ConnectTo(address string, pairingCode string) error {
 		Role:            "controller",
 		closeCh:         make(chan struct{}),
 	}
-	t.session = s
-	t.mu.Unlock()
-	_ = conn.SetDeadline(time.Time{})
-	t.connectMu.Unlock()
+	if !t.installSession(s) {
+		conn.Close()
+		return fmt.Errorf("already connected")
+	}
 
 	log.Printf("connected to %s (%s)", peerHello.Name, shortPeerID(peerHello.DeviceID))
 	if t.OnConnect != nil {
@@ -238,13 +260,6 @@ func (t *Transport) Send(f protocol.Frame) error {
 	// Set write deadline before each write; no need to clear it afterwards
 	// because the next Send refreshes it and heartbeats prevent stale deadlines.
 	_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if f.Type == protocol.MsgMouseMove && len(f.Payload) == 8 {
-		// Fast path: encode DX/DY directly into the pool buffer without going
-		// through a separate payload allocation from MouseMoveMsg.Encode().
-		dx := int32(binary.BigEndian.Uint32(f.Payload[0:]))
-		dy := int32(binary.BigEndian.Uint32(f.Payload[4:]))
-		return protocol.WriteFrameMouseMove(s.conn, dx, dy)
-	}
 	return protocol.WriteFrame(s.conn, f)
 }
 

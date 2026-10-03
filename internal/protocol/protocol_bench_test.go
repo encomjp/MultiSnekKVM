@@ -24,15 +24,6 @@ func BenchmarkWriteFrameMouseMove(b *testing.B) {
 	}
 }
 
-// BenchmarkWriteFrameMouseMoveDirect measures WriteFrameMouseMove (no payload allocation).
-func BenchmarkWriteFrameMouseMoveDirect(b *testing.B) {
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = WriteFrameMouseMove(io.Discard, 5, -3)
-	}
-}
-
 // BenchmarkWriteFrameAudio measures WriteFrame for a large audio frame (~4 KB payload).
 func BenchmarkWriteFrameAudio(b *testing.B) {
 	payload := make([]byte, 4000)
@@ -154,21 +145,6 @@ func BenchmarkFrameRoundTrip(b *testing.B) {
 		m := MouseMoveMsg{DX: int32(i), DY: int32(-i)}
 		f := Frame{Type: MsgMouseMove, Payload: m.Encode()}
 		_ = WriteFrame(&buf, f)
-		r.Reset(buf.Bytes())
-		f2, _ := ReadFrame(r)
-		_, _ = DecodeMouseMove(f2.Payload)
-	}
-}
-
-// BenchmarkFrameRoundTripDirect uses WriteFrameMouseMove for the hot path — no Encode alloc.
-func BenchmarkFrameRoundTripDirect(b *testing.B) {
-	var buf bytes.Buffer
-	r := bytes.NewReader(nil)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		_ = WriteFrameMouseMove(&buf, int32(i), int32(-i))
 		r.Reset(buf.Bytes())
 		f2, _ := ReadFrame(r)
 		_, _ = DecodeMouseMove(f2.Payload)

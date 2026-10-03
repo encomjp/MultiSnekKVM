@@ -127,7 +127,6 @@ var (
 	DecodeKey                   = protocol.DecodeKey
 	DecodeClipboard             = protocol.DecodeClipboard
 	DecodeClipboardSync         = protocol.DecodeClipboardSync
-	DecodePing                  = protocol.DecodePing
 	DecodeUnicodeText           = protocol.DecodeUnicodeText
 	InjectKey                   = input.InjectKey
 	InjectUnicode               = input.InjectUnicode
