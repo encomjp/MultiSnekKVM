@@ -7,7 +7,7 @@
   import OverviewScreen from './lib/OverviewScreen.svelte';
   import SettingsScreen from './lib/SettingsScreen.svelte';
   import { formatLatency, healthSummary, normalizeTailscale, preferredRouteLabel } from './lib/utils';
-  import type { AudioDevice, DeviceInfo, HealthStatus, LastPeerInfo, MonitorInfo, Peer, Session, TailscaleStatus } from './lib/types';
+  import type { AudioDevice, DeviceInfo, HealthStatus, LastPeerInfo, MonitorInfo, NetworkInterface, Peer, Session, TailscaleStatus } from './lib/types';
 
   type PrimaryTab = 'overview' | 'devices' | 'settings';
   type SettingsSection = 'general' | 'audio' | 'advanced';
@@ -28,6 +28,7 @@
   let session: Session = { ...emptySession };
   let tailscale: TailscaleStatus = { ...emptyTailscale };
   let newPeerAddr = '';
+  let networkInterfaces: NetworkInterface[] = [];
   let addError = '';
   let connectingAddress = '';
   let previewMode = false;
@@ -38,6 +39,7 @@
   let removingAddress = '';
   let forgettingPeerID = '';
   let pairingPeer: Peer | null = null;
+  let pairingAddress = '';
   let pairingCodeInput = '';
   let pairingBusy = false;
   let pairingError = '';
@@ -132,6 +134,7 @@
       return;
     }
     pairingPeer = peer;
+    pairingAddress = address;
     pairingCodeInput = '';
     pairingError = '';
     await tick();
@@ -141,6 +144,7 @@
   function closePairingDialog() {
     if (pairingBusy) return;
     pairingPeer = null;
+    pairingAddress = '';
     pairingCodeInput = '';
     pairingError = '';
   }
@@ -206,6 +210,7 @@
     }
 
     refreshAll();
+    refreshNetworkInterfaces();
 
     const runtime = window.runtime;
     const toOff = (value: unknown) => typeof value === 'function' ? value as () => void : () => {};
@@ -375,6 +380,20 @@
     }
   }
 
+  async function refreshNetworkInterfaces() {
+    const appApi = getAppApi();
+    if (!appApi?.GetConnectionInterfaces) {
+      networkInterfaces = [];
+      return;
+    }
+    try {
+      networkInterfaces = await appApi.GetConnectionInterfaces() || [];
+    } catch (error) {
+      networkInterfaces = [];
+      toast(errorMessage(error, 'Unable to read network interfaces'), 'warning');
+    }
+  }
+
   async function addPeer() {
     const addr = newPeerAddr.trim();
     if (!addr) return;
@@ -470,7 +489,7 @@
   async function pairAndConnect() {
     if (!pairingPeer) return;
 
-    const address = pairingPeer.address;
+    const address = pairingAddress || pairingPeer.address;
     const peerName = pairingPeer.name || address;
     pairingCodeInput = sanitizePairingCode(pairingCodeInput);
     if (pairingCodeInput.length !== 6) {
@@ -537,7 +556,7 @@
       await appApi.Connect(address);
       peers = await appApi.GetPeers() || peers;
       activePrimaryTab = 'overview';
-      const peerName = peers.find((peer) => peer.address === address)?.name || address;
+      const peerName = peers.find((peer) => peer.address === address || (peer.addresses || []).includes(address))?.name || address;
       toast(`Connected to ${peerName}`, 'success');
     } catch (error) {
       const message = errorMessage(error, 'Connection failed');
@@ -914,6 +933,8 @@
             sessionConnected={session.connected}
             sessionPeerID={session.peerID}
             {connectingAddress}
+            {networkInterfaces}
+            onRefreshNetworkInterfaces={refreshNetworkInterfaces}
             {removingAddress}
             {forgettingPeerID}
             onAdd={addPeer}
