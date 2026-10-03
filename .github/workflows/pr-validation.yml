@@ -65,9 +65,9 @@ jobs:
         shell: pwsh
         working-directory: frontend
         run: |
-          # Match the existing release workflow: the checked-in lockfile is
-          # currently out of sync with package.json, so npm ci cannot run.
-          npm install
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
