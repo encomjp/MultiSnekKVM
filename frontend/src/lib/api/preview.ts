@@ -11,6 +11,8 @@ import type {
   AudioProfile,
   AudioTiming,
   AudioTransport,
+  BluetoothDevice,
+  BluetoothStatus,
   ConnectionInterface,
   DeviceInfo,
   EdgeSide,
@@ -41,6 +43,7 @@ export interface PreviewState {
   session: SessionStatus;
   lastPeer: LastPeer | null;
   tailscale: TailscaleStatus;
+  bluetooth: BluetoothStatus;
   interfaces: ConnectionInterface[];
   health: HealthStatus;
   logs: string[];
@@ -65,6 +68,13 @@ export interface PreviewState {
   micDeviceID: string;
   micPlaybackDeviceID: string;
 }
+
+export const PREVIEW_BLUETOOTH_DEVICES: readonly BluetoothDevice[] = [
+  { address: 'bt://00:1A:7D:DA:71:13', deviceId: 'studio-pc', name: 'Studio PC' },
+  { address: 'bt://00:1A:7D:DA:71:27', deviceId: 'travel-laptop', name: 'Travel Laptop' },
+];
+
+const BLUETOOTH_SCAN_MS = 800;
 
 const MINUTE = 60;
 const DAY = 86400;
@@ -101,11 +111,15 @@ export function createPreviewState(now = Math.floor(Date.now() / 1000)): Preview
         id: 'travel-laptop',
         name: 'Travel Laptop',
         address: '192.168.0.57:24831',
-        addresses: ['192.168.0.57:24831', '100.88.3.14:24831'],
-        addressKinds: { '192.168.0.57:24831': 'wifi', '100.88.3.14:24831': 'tailscale' },
+        addresses: ['192.168.0.57:24831', '100.88.3.14:24831', 'bt://00:1A:7D:DA:71:27'],
+        addressKinds: {
+          '192.168.0.57:24831': 'wifi',
+          '100.88.3.14:24831': 'tailscale',
+          'bt://00:1A:7D:DA:71:27': 'bluetooth',
+        },
         fingerprint: 'F8D127A45B7E9A44C4D88D1A0FA45E2031B7C0DE',
         source: 'hybrid',
-        routes: ['wifi', 'tailscale'],
+        routes: ['wifi', 'tailscale', 'bluetooth'],
         preferredRoute: 'wifi',
         trusted: true,
         status: 'online',
@@ -144,6 +158,14 @@ export function createPreviewState(now = Math.floor(Date.now() / 1000)): Preview
       targetCount: 2,
       lastSync: now - 25,
       lastError: '',
+    },
+    bluetooth: {
+      available: true,
+      enabled: true,
+      listening: true,
+      scanning: false,
+      devices: PREVIEW_BLUETOOTH_DEVICES.map((device) => ({ ...device })),
+      lastScan: now - 40,
     },
     interfaces: [
       { name: 'Ethernet 3', description: 'USB4 P2P Network Adapter', kind: 'usb4', addresses: ['169.254.22.16'] },
@@ -220,6 +242,7 @@ function clone<T>(value: T): T {
 }
 
 function withPort(address: string): string {
+  if (/^bt:[/][/]/i.test(address)) return address;
   if (address.startsWith('[')) return address.includes(']:') ? address : `${address}:${DEFAULT_PORT}`;
   return /:\d+$/.test(address) ? address : `${address}:${DEFAULT_PORT}`;
 }
@@ -237,6 +260,8 @@ export function createPreviewApi(initial: Partial<PreviewState> = {}): PreviewAp
 
   const findPeer = (address: string) =>
     state.peers.find((peer) => peer.address === address || peer.addresses.includes(address));
+
+  const publishBluetooth = () => emit('bluetooth-updated', state.bluetooth);
 
   const publishPeers = () => emit('peers-updated', state.peers);
   const publishSession = () => emit('session-updated', state.session);
@@ -294,9 +319,30 @@ export function createPreviewApi(initial: Partial<PreviewState> = {}): PreviewAp
     GetConnectionInterfaces: () => resolved(state.interfaces),
     GetLastPeer: () => resolved(state.lastPeer),
 
+    GetBluetoothStatus: () => resolved(state.bluetooth),
+    async SetBluetoothEnabled(enabled) {
+      const bt = state.bluetooth;
+      if (!bt.available) throw new Error('Bluetooth is not available on this PC.');
+      state.bluetooth = enabled
+        ? { ...bt, enabled: true, listening: true, devices: PREVIEW_BLUETOOTH_DEVICES.map((d) => ({ ...d })) }
+        : { ...bt, enabled: false, listening: false, scanning: false, devices: [] };
+      publishBluetooth();
+    },
+    async RefreshBluetooth() {
+      const bt = state.bluetooth;
+      if (!bt.available || !bt.enabled || bt.scanning) return;
+      state.bluetooth = { ...bt, scanning: true };
+      publishBluetooth();
+      setTimeout(() => {
+        if (!state.bluetooth.enabled) return;
+        state.bluetooth = { ...state.bluetooth, scanning: false, lastScan: Math.floor(Date.now() / 1000) };
+        publishBluetooth();
+      }, BLUETOOTH_SCAN_MS);
+    },
+
     async AddPeer(raw) {
       const trimmed = raw.trim();
-      if (!trimmed) throw new Error('Enter an IP address or hostname.');
+      if (!trimmed) throw new Error('Enter an IP address, hostname or bt:// address.');
       const address = withPort(trimmed);
       if (findPeer(address)) throw new Error(`${trimmed} is already in your device list.`);
       state.peers = [

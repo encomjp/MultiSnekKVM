@@ -51,8 +51,13 @@
 
   const routeSummary = $derived.by(() => {
     const kind = peer.addressKinds[selected] || '';
-    const primary = kind ? routeLabel(kind) : addressLabel(peer, selected);
-    const others = orderedRoutes(peer.routes.filter((r) => r !== kind && r !== 'manual')).map(routeLabel);
+    const primary = addressLabel(peer, selected);
+    const others = orderedRoutes(peer.routes.filter((r) => r !== kind && r !== 'manual')).map((r) =>
+      routeLabel(
+        r,
+        peer.addresses.find((a) => peer.addressKinds[a] === r),
+      ),
+    );
     return { primary, host: hostOf(selected), others };
   });
 

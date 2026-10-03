@@ -333,6 +333,7 @@ func (a *App) startup(ctx context.Context) {
 
 	SafeGoRestart(a.ctx, "tailscale", func(ctx context.Context) { a.tailscale.Run(ctx) })
 	SafeGoRestart(a.ctx, "discovery", func(ctx context.Context) { a.discovery.Run(ctx) })
+	a.initBluetooth()
 	SafeGoRestart(a.ctx, "emit-updates", func(ctx context.Context) { a.emitUpdates() })
 	SafeGoRestart(a.ctx, "clipboard-sync", func(ctx context.Context) { a.clipboardSync() })
 	SafeGoRestart(a.ctx, "clipboard-writer", a.clipboardWriter)

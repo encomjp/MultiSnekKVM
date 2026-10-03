@@ -8,6 +8,8 @@ import type {
   AudioProfile,
   AudioTiming,
   AudioTransport,
+  BluetoothDevice,
+  BluetoothStatus,
   ConnectionInterface,
   DeviceInfo,
   EdgeSide,
@@ -145,6 +147,37 @@ export function normalizeTailscale(raw: unknown): TailscaleStatus {
     targetCount: num(r.targetCount),
     lastSync: num(r.lastSync),
     lastError: str(r.lastError),
+  };
+}
+
+export const emptyBluetooth: BluetoothStatus = {
+  available: false,
+  enabled: false,
+  listening: false,
+  scanning: false,
+  devices: [],
+  lastScan: 0,
+};
+
+export function normalizeBluetooth(raw: unknown): BluetoothStatus {
+  const r = asRecord(raw);
+  const devices: BluetoothDevice[] = Array.isArray(r.devices)
+    ? r.devices
+        .map((item) => {
+          const d = asRecord(item);
+          return { address: str(d.address), deviceId: str(d.deviceId), name: str(d.name) };
+        })
+        .filter((d) => d.address)
+    : [];
+  const error = str(r.error);
+  return {
+    available: bool(r.available),
+    enabled: bool(r.enabled),
+    listening: bool(r.listening),
+    scanning: bool(r.scanning),
+    ...(error ? { error } : {}),
+    devices,
+    lastScan: num(r.lastScan),
   };
 }
 

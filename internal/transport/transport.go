@@ -83,6 +83,7 @@ type Transport struct {
 	pairingLockedUntil time.Time
 
 	listener net.Listener
+	btDial   func(address string, timeout time.Duration) (net.Conn, error)
 
 	// Local TLS certificate, loaded once from disk and reused.
 	certMu sync.Mutex
