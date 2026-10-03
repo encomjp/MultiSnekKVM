@@ -7,6 +7,7 @@ import {input} from '../models';
 import {logutil} from '../models';
 import {app} from '../models';
 import {tailscale} from '../models';
+import {bluetooth} from '../models';
 
 export function AddPeer(arg1:string):Promise<void>;
 
@@ -39,6 +40,8 @@ export function GetCaptureDeviceID():Promise<string>;
 export function GetConnectionInterfaces():Promise<Array<app.ConnectionInterface>>;
 
 export function GetDevice():Promise<identity.DeviceInfo>;
+
+export function GetBluetoothStatus():Promise<bluetooth.Status>;
 
 export function GetEdgeSide():Promise<string>;
 
@@ -84,6 +87,8 @@ export function PickAndSendFiles():Promise<void>;
 
 export function Reconnect():Promise<void>;
 
+export function RefreshBluetooth():Promise<void>;
+
 export function RemovePeer(arg1:string):Promise<void>;
 
 export function SaveReceivedFiles(arg1:string):Promise<app.SaveReceivedFilesResult>;
@@ -97,6 +102,8 @@ export function SetAudioProfile(arg1:string):Promise<void>;
 export function SetAudioTiming(arg1:string):Promise<void>;
 
 export function SetAudioTransport(arg1:string):Promise<void>;
+
+export function SetBluetoothEnabled(arg1:boolean):Promise<void>;
 
 export function SetAutoReconnect(arg1:boolean):Promise<void>;
 
