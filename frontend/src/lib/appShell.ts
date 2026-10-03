@@ -1,5 +1,5 @@
 import { emptyHealth, emptySession, emptyTailscale } from './constants';
-import type { AudioDevice, DeviceInfo, HealthStatus, LastPeerInfo, Peer, Session, TailscaleStatus } from './types';
+import type { AudioDevice, DeviceInfo, HealthStatus, LastPeerInfo, NetworkInterface, Peer, Session, TailscaleStatus } from './types';
 
 export interface AppApi {
   AddPeer(address: string): Promise<void>;
@@ -22,6 +22,7 @@ export interface AppApi {
   GetMicPlaybackDeviceID(): Promise<string>;
   GetMuteSource(): Promise<boolean>;
   GetPeers(): Promise<Peer[]>;
+  GetConnectionInterfaces?(): Promise<NetworkInterface[]>;
   GetPlaybackDeviceID(): Promise<string>;
   GetRecentLogs(): Promise<string[]>;
   GetSensitivity(): Promise<number>;
