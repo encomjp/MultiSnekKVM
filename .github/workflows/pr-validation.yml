@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Only validate the newest revision of a draft PR.
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-tests:
     runs-on: windows-latest
@@ -65,4 +70,6 @@ jobs:
           npm install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
