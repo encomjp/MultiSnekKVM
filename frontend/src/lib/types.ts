@@ -50,6 +50,7 @@ export interface Peer {
 
 export interface NetworkInterface {
   name: string;
+  description?: string;
   kind: 'usb4' | 'usb-bridge' | 'ethernet' | 'wifi' | 'bluetooth' | 'network';
   addresses: string[];
 }
