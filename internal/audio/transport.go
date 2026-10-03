@@ -50,7 +50,9 @@ func ValidTransportMode(mode string) bool {
 // unknown routes), where PCM's ~1.5 Mbit/s per stream causes stalls.
 // The microphone always uses Opus.
 func ResolveTransport(kind StreamKind, mode, routeKind string) string {
-	if kind == StreamMic {
+	// Bluetooth (direct or PAN) is far too slow for raw PCM whatever the
+	// setting says; the microphone is always compressed.
+	if kind == StreamMic || routeKind == "bluetooth" {
 		return audioTransportOpus
 	}
 	switch NormalizeTransportMode(mode) {
@@ -65,6 +67,19 @@ func ResolveTransport(kind StreamKind, mode, routeKind string) string {
 	default:
 		return audioTransportOpus
 	}
+}
+
+// bluetoothMaxOpusBitrate keeps desktop audio plus input comfortably inside
+// Classic Bluetooth's real-world throughput (about 1-2 Mbit/s shared).
+const bluetoothMaxOpusBitrate = 96000
+
+// LinkBitrateCap returns the maximum Opus bitrate for a route kind, or 0
+// for no cap.
+func LinkBitrateCap(routeKind string) int {
+	if routeKind == "bluetooth" {
+		return bluetoothMaxOpusBitrate
+	}
+	return 0
 }
 
 func NormalizeProfile(profile string) string {

@@ -70,6 +70,7 @@ type OutboundStream struct {
 
 	mode     string
 	profile  string
+	bitCap   int // max Opus bitrate for the current link, 0 = none
 	devRaw   []byte
 	dev      pcmSpec
 	wireCh   int
@@ -167,6 +168,9 @@ func (s *OutboundStream) setupOpusLocked() error {
 	if s.kind == StreamMic {
 		cfg.Bitrate, cfg.Complexity, cfg.LowDelay = micOpusBitrate, micOpusComplexity, false
 	}
+	if s.bitCap > 0 && cfg.Bitrate > s.bitCap {
+		cfg.Bitrate = s.bitCap
+	}
 	enc, err := opusEncoderFactory(cfg)
 	if err != nil {
 		return err
@@ -178,6 +182,14 @@ func (s *OutboundStream) setupOpusLocked() error {
 		s.packet = make([]byte, opusMaxPacket)
 	}
 	return nil
+}
+
+// SetBitrateCap limits the Opus bitrate (e.g. on Bluetooth); 0 removes the
+// limit. It takes effect at the next Configure/Reconfigure.
+func (s *OutboundStream) SetBitrateCap(bitsPerSecond int) {
+	s.mu.Lock()
+	s.bitCap = bitsPerSecond
+	s.mu.Unlock()
 }
 
 // Mode reports the transport in effect ("" before Configure).

@@ -4,6 +4,7 @@
 package link
 
 import (
+	"multisnekkvm/internal/bluetooth"
 	"net"
 	"sort"
 	"strings"
@@ -182,6 +183,9 @@ func KindForIP(ip net.IP, adapters []Adapter) string {
 }
 
 func KindForAddress(address string, adapters []Adapter) string {
+	if bluetooth.IsAddress(address) {
+		return "bluetooth"
+	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return "network"
