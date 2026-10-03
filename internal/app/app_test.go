@@ -316,7 +316,7 @@ func TestReleaseInjectedRemoteKeysReleasesHeldMouseButtons(t *testing.T) {
 	}
 }
 
-func TestRemoteKeyWatchdogDoesNotFireForMouseButtonHoldOnly(t *testing.T) {
+func TestRemoteKeyWatchdogReleasesStaleMouseButtonHold(t *testing.T) {
 	originalInjectMouseClick := InjectMouseClick
 	originalTimeout := remoteKeyIdleTimeout
 	defer func() {
@@ -325,18 +325,24 @@ func TestRemoteKeyWatchdogDoesNotFireForMouseButtonHoldOnly(t *testing.T) {
 	}()
 
 	remoteKeyIdleTimeout = 20 * time.Millisecond
-	var clicks int
+	released := make(chan byte, 1)
 	InjectMouseClick = func(button byte, pressed bool) {
-		clicks++
+		if !pressed {
+			released <- button
+		}
 	}
 
 	a := &App{}
 	a.remoteMouseButtons[0] = true // LMB held, no keyboard keys pressed
 	a.touchRemoteKeyWatchdog()
 
-	time.Sleep(100 * time.Millisecond)
-	if clicks != 0 {
-		t.Fatalf("watchdog should not fire for mouse-button-only hold, but got %d InjectMouseClick calls", clicks)
+	select {
+	case button := <-released:
+		if button != 0 {
+			t.Fatalf("expected left mouse button release, got %d", button)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("watchdog must release a stale mouse-button-only hold")
 	}
 }
 
