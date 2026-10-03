@@ -148,18 +148,18 @@ var (
 )
 
 type PeerInfo struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Address        string   `json:"address"`
-	Addresses      []string `json:"addresses"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Address        string            `json:"address"`
+	Addresses      []string          `json:"addresses"`
 	AddressKinds   map[string]string `json:"addressKinds,omitempty"`
-	Fingerprint    string   `json:"fingerprint"`
-	Source         string   `json:"source"`
-	Routes         []string `json:"routes"`
-	PreferredRoute string   `json:"preferredRoute"`
-	Trusted        bool     `json:"trusted"`
-	Status         string   `json:"status"`
-	LastSeen       int64    `json:"lastSeen"`
+	Fingerprint    string            `json:"fingerprint"`
+	Source         string            `json:"source"`
+	Routes         []string          `json:"routes"`
+	PreferredRoute string            `json:"preferredRoute"`
+	Trusted        bool              `json:"trusted"`
+	Status         string            `json:"status"`
+	LastSeen       int64             `json:"lastSeen"`
 }
 
 type SessionStatus struct {

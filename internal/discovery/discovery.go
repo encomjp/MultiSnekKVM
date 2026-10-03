@@ -23,16 +23,16 @@ type broadcastMessage struct {
 }
 
 type DiscoveredPeer struct {
-	DeviceID    string
-	Name        string
-	Address     string
-	Addresses   []string
-	Fingerprint string
-	Routes      []string
+	DeviceID     string
+	Name         string
+	Address      string
+	Addresses    []string
+	Fingerprint  string
+	Routes       []string
 	AddressKinds map[string]string
-	LastSeen    time.Time
-	addressSeen map[string]time.Time
-	routeSeen   map[string]time.Time
+	LastSeen     time.Time
+	addressSeen  map[string]time.Time
+	routeSeen    map[string]time.Time
 }
 
 // IPsProvider is satisfied by anything that can return Tailscale target IPs.

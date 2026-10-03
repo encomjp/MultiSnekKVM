@@ -55,10 +55,10 @@ func InjectMouseMove(dx, dy int32) {
 
 	var normX, normY int32
 	if virtWidth > 1 {
-		normX = (newX-virtLeft)*65535 / (virtWidth - 1)
+		normX = (newX - virtLeft) * 65535 / (virtWidth - 1)
 	}
 	if virtHeight > 1 {
-		normY = (newY-virtTop)*65535 / (virtHeight - 1)
+		normY = (newY - virtTop) * 65535 / (virtHeight - 1)
 	}
 
 	// SendInput with MOUSEEVENTF_ABSOLUTE injects a real synthetic hardware

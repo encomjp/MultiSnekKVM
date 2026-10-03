@@ -40,14 +40,14 @@ func main() {
 func renderIcon(sz int) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, sz, sz))
 
-	radius := float64(sz) * 0.226 // ~58/256 corner radius ratio
-	bg0 := color.NRGBA{24, 24, 27, 255}   // #18181b
-	bg1 := color.NRGBA{9, 9, 11, 255}     // #09090b
+	radius := float64(sz) * 0.226       // ~58/256 corner radius ratio
+	bg0 := color.NRGBA{24, 24, 27, 255} // #18181b
+	bg1 := color.NRGBA{9, 9, 11, 255}   // #09090b
 	borderCol := color.NRGBA{255, 255, 255, 18}
 
 	// Fill rounded rect background with radial gradient approximation
 	cx, cy := float64(sz)/2, float64(sz)/2
-	maxDist := math.Sqrt(cx*cx+cy*cy)
+	maxDist := math.Sqrt(cx*cx + cy*cy)
 	for y := 0; y < sz; y++ {
 		for x := 0; x < sz; x++ {
 			if !inRoundRect(x, y, sz, radius) {
@@ -247,8 +247,8 @@ func writeICO(path string, imgs []image.Image, sizes []int) {
 
 	n := len(imgs)
 	// ICO header: 6 bytes
-	write16(f, 0)    // reserved
-	write16(f, 1)    // type: ICO
+	write16(f, 0)         // reserved
+	write16(f, 1)         // type: ICO
 	write16(f, uint16(n)) // count
 
 	// Directory entries: 16 bytes each
