@@ -15,7 +15,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (a *App) BeforeClose(_ context.Context) bool {
+func (a *App) beforeClose(_ context.Context) bool {
 	a.mu.RLock()
 	quit := a.quitRequested
 	a.mu.RUnlock()
@@ -28,7 +28,7 @@ func (a *App) BeforeClose(_ context.Context) bool {
 	return true
 }
 
-func (a *App) Shutdown(_ context.Context) {
+func (a *App) shutdown(_ context.Context) {
 	logutil.LogKV("app.shutdown.begin",
 		"connected", a.transport != nil && a.transport.GetSession() != nil,
 		"playing_audio", a.audio != nil && a.audio.IsPlaying(),

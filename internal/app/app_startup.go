@@ -14,7 +14,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (a *App) Startup(ctx context.Context) {
+func (a *App) startup(ctx context.Context) {
 	logutil.LogKV("app.startup.begin",
 		"requested_name", a.device.Name,
 		"port", a.device.Port,
