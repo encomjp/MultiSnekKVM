@@ -45,6 +45,12 @@ export interface Peer {
   lastSeen?: number;
 }
 
+export interface NetworkInterface {
+  name: string;
+  kind: 'usb4' | 'bluetooth' | 'network';
+  addresses: string[];
+}
+
 export interface AudioDevice {
   id: string;
   name: string;
