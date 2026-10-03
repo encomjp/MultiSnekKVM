@@ -11,6 +11,7 @@ import (
 
 type Adapter struct {
     Name      string   `json:"name"`
+    Description string `json:"description,omitempty"`
     Kind      string   `json:"kind"`
     Addresses []string `json:"addresses"`
     subnets   []*net.IPNet
@@ -38,6 +39,14 @@ func Kind(name string) string {
     }
 }
 
+// KindFromNames uses the driver description when it identifies hardware
+// more precisely than the user-customizable network connection alias.
+func KindFromNames(name, description string) string {
+    kind := Kind(description)
+    if kind != "network" { return kind }
+    return Kind(name)
+}
+
 // Adapters returns active interfaces with usable IP addresses. Adapter
 // descriptions vary by Windows driver; an unrecognized name is "network",
 // never assumed to be USB or Ethernet.
@@ -47,6 +56,7 @@ func Adapters() []Adapter {
         return []Adapter{}
     }
     result := make([]Adapter, 0, len(ifaces))
+    descriptions := adapterDescriptions()
     for _, iface := range ifaces {
         if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
             continue
@@ -55,7 +65,8 @@ func Adapters() []Adapter {
         if err != nil {
             continue
         }
-        a := Adapter{Name: iface.Name, Kind: Kind(iface.Name), Addresses: []string{}}
+        description := descriptions[iface.Index]
+        a := Adapter{Name: iface.Name, Description: description, Kind: KindFromNames(iface.Name, description), Addresses: []string{}}
         for _, address := range addrs {
             subnet, ok := address.(*net.IPNet)
             if !ok || subnet.IP == nil || subnet.IP.IsLoopback() || subnet.IP.IsUnspecified() {
