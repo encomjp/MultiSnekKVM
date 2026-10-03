@@ -3,6 +3,7 @@
   import { isManualPeer, isPeerOnline, pluralize } from '../utils';
   import Icon from '../ui/Icon.svelte';
   import AdaptersPanel from './devices/AdaptersPanel.svelte';
+  import BluetoothCard from './devices/BluetoothCard.svelte';
   import PeerCard from './devices/PeerCard.svelte';
 
   type Filter = 'all' | 'online' | 'paired' | 'manual';
@@ -71,7 +72,7 @@
           id="add-peer"
           class="input mono add-input"
           type="text"
-          placeholder="IP or hostname, e.g. 192.168.0.42"
+          placeholder="IP, hostname or bt:// address"
           autocomplete="off"
           spellcheck="false"
           bind:value={newAddress}
@@ -118,7 +119,10 @@
         {/each}
       </ul>
     {/if}
-    <AdaptersPanel />
+    <div class="side">
+      <BluetoothCard />
+      <AdaptersPanel />
+    </div>
   </div>
 </div>
 
@@ -178,6 +182,14 @@
     flex-wrap: wrap;
     gap: 20px;
     align-items: flex-start;
+  }
+
+  .side {
+    flex: 1 1 280px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
   }
 
   .peer-list,

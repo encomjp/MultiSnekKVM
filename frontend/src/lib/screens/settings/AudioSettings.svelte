@@ -170,6 +170,10 @@
       />
     </div>
     {#if s.audioProfile.error}<p class="field-error">{s.audioProfile.error}</p>{/if}
+    <p class="notice">
+      <Icon name="bluetooth" />
+      <span>Over Bluetooth, desktop audio is always compressed (Opus ≤ 96 kbit/s).</span>
+    </p>
   </Card>
 </div>
 
