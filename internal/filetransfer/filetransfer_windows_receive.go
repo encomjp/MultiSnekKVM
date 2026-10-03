@@ -115,8 +115,15 @@ func (ft *FileTransferManager) handleOffer(payload []byte) {
 	}
 	log.Printf("ft: received offer id=%d files=%d total=%d B", offer.ID, len(offer.Files), offer.Total)
 
-	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("multisnek_recv_%d", offer.ID))
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+	ft.mu.Lock()
+	_, duplicate := ft.active[offer.ID]
+	ft.mu.Unlock()
+	if duplicate {
+		ft.sendCancel(offer.ID, 1)
+		return
+	}
+	tempDir, err := os.MkdirTemp("", fmt.Sprintf("multisnek_recv_%d_", offer.ID))
+	if err != nil {
 		log.Printf("ft: mkdir %s: %v", tempDir, err)
 		ft.sendCancel(offer.ID, 1)
 		return
@@ -185,6 +192,13 @@ func (ft *FileTransferManager) handleChunk(payload []byte) {
 	recv.mu.Lock()
 	if fileIdx < 0 || fileIdx >= len(recv.files) || recv.files[fileIdx] == nil {
 		recv.mu.Unlock()
+		return
+	}
+	fileSize := recv.offer.Files[fileIdx].Size
+	if offset > fileSize || uint64(len(data)) > fileSize-offset || offset != recv.received[fileIdx] {
+		recv.mu.Unlock()
+		log.Printf("ft: invalid chunk file[%d] offset=%d size=%d", fileIdx, offset, len(data))
+		ft.abortReceive(id, recv, 1)
 		return
 	}
 	if _, err := recv.files[fileIdx].WriteAt(data, int64(offset)); err != nil {
