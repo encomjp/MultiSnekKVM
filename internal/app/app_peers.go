@@ -261,3 +261,70 @@ func normalizePeerAddress(raw string, defaultPort int) (string, error) {
 
 	return net.JoinHostPort(trimmed, strconv.Itoa(defaultPort)), nil
 }
+
+
+// ConnectionInterface exposes active IP-capable adapters for direct-link setup.
+// USB4/Thunderbolt networking and Bluetooth PAN appear as ordinary IP adapters
+// when Windows and the attached hardware support them; no raw USB/Bluetooth
+// transport is implied by this API.
+type ConnectionInterface struct {
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`
+	Addresses []string `json:"addresses"`
+}
+
+func connectionInterfaceKind(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.Contains(lower, "usb4"), strings.Contains(lower, "thunderbolt"):
+		return "usb4"
+	case strings.Contains(lower, "bluetooth"), strings.Contains(lower, "personal area"):
+		return "bluetooth"
+	default:
+		return "network"
+	}
+}
+
+// GetConnectionInterfaces returns addresses the user may share with another
+// computer for a manual connection, including direct USB4 and Bluetooth PAN
+// addresses if Windows has established those links. Link-local IPv6 addresses
+// are excluded because they require a local interface zone to be connectable.
+func (a *App) GetConnectionInterfaces() []ConnectionInterface {
+	result := make([]ConnectionInterface, 0)
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return result
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		entry := ConnectionInterface{Name: iface.Name, Kind: connectionInterfaceKind(iface.Name), Addresses: make([]string, 0)}
+		for _, address := range addrs {
+			ipNet, ok := address.(*net.IPNet)
+			if !ok || ipNet.IP == nil || ipNet.IP.IsLoopback() || ipNet.IP.IsUnspecified() {
+				continue
+			}
+			if ipNet.IP.To4() == nil && ipNet.IP.IsLinkLocalUnicast() {
+				continue
+			}
+			entry.Addresses = append(entry.Addresses, ipNet.IP.String())
+		}
+		if len(entry.Addresses) > 0 {
+			sort.Strings(entry.Addresses)
+			result = append(result, entry)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Kind != result[j].Kind {
+			order := map[string]int{"usb4": 0, "bluetooth": 1, "network": 2}
+			return order[result[i].Kind] < order[result[j].Kind]
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
