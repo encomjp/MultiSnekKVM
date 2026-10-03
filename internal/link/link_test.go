@@ -66,3 +66,21 @@ func TestRecognizedAdapterSubnet(t *testing.T) {
         t.Fatalf("unrecognized direct route: %q", got)
     }
 }
+
+
+func TestDriverDescriptionOverridesGenericWindowsAlias(t *testing.T) {
+    cases := []struct {
+        alias, description, want string
+    }{
+        {"Ethernet 3", "USB4 P2P Network Adapter", "usb4"},
+        {"Ethernet 4", "USB NCM Network Device", "usb-bridge"},
+        {"Ethernet 5", "Bluetooth Device (Personal Area Network)", "bluetooth"},
+        {"Ethernet 6", "Generic Network Adapter", "ethernet"},
+        {"Wi-Fi", "", "wifi"},
+    }
+    for _, tc := range cases {
+        if got := KindFromNames(tc.alias, tc.description); got != tc.want {
+            t.Errorf("KindFromNames(%q,%q)=%q; want %q", tc.alias, tc.description, got, tc.want)
+        }
+    }
+}
