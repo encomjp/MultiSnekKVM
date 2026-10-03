@@ -1,25 +1,22 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "useDefineForClassFields": true,
     "module": "ESNext",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowJs": true,
-    "checkJs": true,
+    "checkJs": false,
     "isolatedModules": true,
-    "strict": false,
-    "noImplicitAny": false,
-    "moduleResolution": "bundler",
-    "types": ["svelte", "vite/client"],
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["svelte", "vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": [
-    "src/**/*.d.ts",
-    "src/**/*.ts",
-    "src/**/*.js",
-    "src/**/*.svelte",
-    "wailsjs/**/*.js",
-    "wailsjs/**/*.ts"
-  ]
+  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte", "wailsjs/**/*.d.ts", "wailsjs/**/*.ts"]
 }
