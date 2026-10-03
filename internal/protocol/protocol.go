@@ -11,6 +11,16 @@ import (
 // MaxFramePayloadBytes is the maximum allowed payload size in a frame.
 const MaxFramePayloadBytes = 1 << 20
 
+// MaxHandshakePayloadBytes bounds frames read before the peer is
+// authenticated (hello, pairing). Legitimate handshake frames are tiny;
+// a small cap stops an unauthenticated client forcing 1 MiB allocations.
+const MaxHandshakePayloadBytes = 64 << 10
+
+// maxPooledWriteBuffer is the largest buffer returned to frameWritePool.
+// Occasional large frames (file chunks, clipboard) must not pin big
+// backing arrays in the pool indefinitely.
+const maxPooledWriteBuffer = 64 << 10
+
 // Message types
 const (
 	MsgHello                byte = 0x01
@@ -88,33 +98,10 @@ func WriteFrame(w io.Writer, f Frame) error {
 	if err == nil && n != len(buf) {
 		err = io.ErrShortWrite
 	}
-	*bp = buf[:0]
-	frameWritePool.Put(bp)
-	return err
-}
-
-// WriteFrameMouseMove writes a MsgMouseMove frame directly from DX/DY values,
-// encoding into the pool buffer in one step and avoiding the MouseMoveMsg.Encode()
-// intermediate allocation. Use this on the hot send path instead of WriteFrame.
-func WriteFrameMouseMove(w io.Writer, dx, dy int32) error {
-	const size = 5 + 8 // 1 type + 4 length + 4 DX + 4 DY = 13 bytes
-	bp := frameWritePool.Get().(*[]byte)
-	buf := *bp
-	if cap(buf) < size {
-		buf = make([]byte, size)
-	} else {
-		buf = buf[:size]
+	if cap(buf) <= maxPooledWriteBuffer {
+		*bp = buf[:0]
+		frameWritePool.Put(bp)
 	}
-	buf[0] = MsgMouseMove
-	binary.BigEndian.PutUint32(buf[1:], 8) // payload length
-	binary.BigEndian.PutUint32(buf[5:], uint32(dx))
-	binary.BigEndian.PutUint32(buf[9:], uint32(dy))
-	n, err := w.Write(buf)
-	if err == nil && n != len(buf) {
-		err = io.ErrShortWrite
-	}
-	*bp = buf[:0]
-	frameWritePool.Put(bp)
 	return err
 }
 
@@ -123,7 +110,14 @@ var frameReadHeaderPool = sync.Pool{
 	New: func() any { b := [5]byte{}; return &b },
 }
 
+// ReadFrame reads one frame with a payload of at most MaxFramePayloadBytes.
 func ReadFrame(r io.Reader) (Frame, error) {
+	return ReadFrameLimit(r, MaxFramePayloadBytes)
+}
+
+// ReadFrameLimit reads one frame, rejecting payloads larger than maxPayload
+// before allocating.
+func ReadFrameLimit(r io.Reader, maxPayload uint32) (Frame, error) {
 	hp := frameReadHeaderPool.Get().(*[5]byte)
 	_, err := io.ReadFull(r, hp[:])
 	if err != nil {
@@ -134,7 +128,7 @@ func ReadFrame(r io.Reader) (Frame, error) {
 	msgType := hp[0]
 	frameReadHeaderPool.Put(hp)
 
-	if length > MaxFramePayloadBytes {
+	if length > maxPayload {
 		return Frame{}, fmt.Errorf("frame too large: %d", length)
 	}
 	payload := make([]byte, length)
@@ -348,11 +342,4 @@ func (m PingMsg) Encode() []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, m.TimestampNano)
 	return b
-}
-
-func DecodePing(b []byte) (PingMsg, error) {
-	if len(b) != 8 {
-		return PingMsg{}, fmt.Errorf("ping payload length=%d, want 8", len(b))
-	}
-	return PingMsg{TimestampNano: binary.BigEndian.Uint64(b)}, nil
 }
