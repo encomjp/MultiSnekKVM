@@ -26,6 +26,8 @@ func (a *AudioStreamer) SetPlaybackFormat(format []byte) error {
 	}
 	next := cloneBytes(format)
 
+	a.playLifecycle.Lock()
+	defer a.playLifecycle.Unlock()
 	a.mu.Lock()
 	same := bytes.Equal(a.playFmt, next)
 	wasPlaying := a.playing
@@ -41,7 +43,7 @@ func (a *AudioStreamer) SetPlaybackFormat(format []byte) error {
 	a.playMu.Unlock()
 
 	if wasPlaying {
-		a.StopPlayback()
+		a.stopPlaybackLocked()
 	}
 
 	log.Printf("audio playback format set: %s", describeWaveFormat(next))
@@ -49,31 +51,49 @@ func (a *AudioStreamer) SetPlaybackFormat(format []byte) error {
 }
 
 func (a *AudioStreamer) StartCapture(sendFn func(protocol.Frame)) error {
+	a.capLifecycle.Lock()
+	defer a.capLifecycle.Unlock()
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.capturing {
+		a.mu.Unlock()
 		return nil
 	}
-	a.capturing = true
+	if a.capStop != nil {
+		// A prior worker may have terminated by itself. Join it before Add.
+		a.mu.Unlock()
+		a.capWg.Wait()
+		a.mu.Lock()
+		a.capStop = nil
+	}
 	a.capStop = make(chan struct{})
+	a.capturing = true
 	a.capWg.Add(1)
+	a.mu.Unlock()
 	go a.captureLoop(sendFn)
 	return nil
 }
 
 func (a *AudioStreamer) StopCapture() {
+	a.capLifecycle.Lock()
+	defer a.capLifecycle.Unlock()
 	a.mu.Lock()
-	if !a.capturing {
+	stop := a.capStop
+	if stop == nil {
 		a.mu.Unlock()
 		return
 	}
-	close(a.capStop)
+	close(stop)
 	a.capturing = false
 	a.mu.Unlock()
 	a.capWg.Wait()
+	a.mu.Lock()
+	a.capStop = nil
+	a.mu.Unlock()
 }
 
 func (a *AudioStreamer) StartPlayback() error {
+	a.playLifecycle.Lock()
+	defer a.playLifecycle.Unlock()
 	a.mu.Lock()
 	if a.playing {
 		a.mu.Unlock()
@@ -84,40 +104,52 @@ func (a *AudioStreamer) StartPlayback() error {
 	if len(format) == 0 {
 		return fmt.Errorf("audio playback format not received yet")
 	}
-	bpf := blockAlignForFormat(format)
-	if bpf == 0 {
+	if blockAlignForFormat(format) == 0 {
 		return fmt.Errorf("invalid audio playback block alignment")
 	}
-
 	a.mu.Lock()
-	if a.playing {
+	if a.playStop != nil {
 		a.mu.Unlock()
-		return nil
+		a.playWg.Wait()
+		a.mu.Lock()
+		a.playStop = nil
 	}
+	a.playStop = make(chan struct{})
 	a.playing = true
 	a.playReady = false
+	a.playWg.Add(1)
 	a.mu.Unlock()
 	a.playMu.Lock()
 	a.playBuf = nil
 	a.overflowLogs = 0
 	a.playMu.Unlock()
-	a.playStop = make(chan struct{})
-	a.playWg.Add(1)
 	go a.playbackLoop(format)
 	return nil
 }
 
 func (a *AudioStreamer) StopPlayback() {
+	a.playLifecycle.Lock()
+	defer a.playLifecycle.Unlock()
+	a.stopPlaybackLocked()
+}
+
+// stopPlaybackLocked requires playLifecycle. The stop channel remains stable
+// until the old worker has exited; Start cannot reuse its WaitGroup meanwhile.
+func (a *AudioStreamer) stopPlaybackLocked() {
 	a.mu.Lock()
-	if !a.playing {
+	stop := a.playStop
+	if stop == nil {
 		a.mu.Unlock()
 		return
 	}
-	close(a.playStop)
+	close(stop)
 	a.playing = false
 	a.playReady = false
 	a.mu.Unlock()
 	a.playWg.Wait()
+	a.mu.Lock()
+	a.playStop = nil
+	a.mu.Unlock()
 	a.playMu.Lock()
 	a.playBuf = nil
 	a.playMu.Unlock()
