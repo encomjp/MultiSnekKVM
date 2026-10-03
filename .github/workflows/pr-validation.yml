@@ -35,14 +35,37 @@ jobs:
             mingw-w64-x86_64-opus
             mingw-w64-x86_64-opusfile
             mingw-w64-x86_64-libogg
-      - name: Resolve and verify Go dependencies
+      - name: Verify go.mod / go.sum are tidy
         shell: pwsh
         run: |
           go mod tidy
-          Write-Host "--- New PAKE dependency checksums ---"
-          Get-Content go.sum | Where-Object { $_ -match 'backkem/spake2-go|dedis.ch/(kyber|fixbuf)' }
-          Write-Host "--- go.mod changes from tidy ---"
-          git diff -- go.mod
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- go.mod go.sum
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::go.mod/go.sum are not tidy; run 'go mod tidy' and commit the result"
+            exit 1
+          }
+      - name: Check gofmt
+        shell: pwsh
+        run: |
+          $files = git ls-files '*.go' | Where-Object { -not $_.StartsWith('frontend/') }
+          $unformatted = gofmt -l $files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($unformatted) {
+            Write-Host "::error::gofmt needed for:"
+            $unformatted | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+      - name: Go vet
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          $env:PATH = "$msys2\mingw64\bin;$env:PATH"
+          $env:PKG_CONFIG_PATH = "$msys2/mingw64/lib/pkgconfig"
+          # Win32/COM uintptr->pointer casts are expected; skip unsafeptr.
+          go vet -unsafeptr=false ./internal/...
       - name: Backend tests
         shell: pwsh
         env:
